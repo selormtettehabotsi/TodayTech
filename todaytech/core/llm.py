@@ -57,7 +57,7 @@ async def _call_gemini(api_key: str, prompt: str, system: str = "", json_mode: b
 
 
 async def _call_groq(api_key: str, prompt: str, system: str = "", json_mode: bool = False) -> str:
-    """Call Groq API (free tier)."""
+    """Call Groq API with active model fallback."""
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -69,20 +69,31 @@ async def _call_groq(api_key: str, prompt: str, system: str = "", json_mode: boo
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    body: dict[str, Any] = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": messages,
-        "temperature": 0.3,
-        "max_tokens": 4096,
-    }
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
+    models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    last_err = None
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    for model in models:
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(url, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except Exception as exc:
+            last_err = exc
+            log.warning("groq.model_failed", model=model, error=str(exc))
+            continue
+
+    raise last_err or RuntimeError("All Groq models failed")
 
 
 async def _call_openrouter(
