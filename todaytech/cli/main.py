@@ -307,16 +307,20 @@ def digest(notify: bool) -> None:
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", help="Host address to bind to")
-@click.option("--port", default=8000, help="Port to listen on")
-def web(host: str, port: int) -> None:
+@click.option("--host", default=None, help="Host address to bind to")
+@click.option("--port", default=None, type=int, help="Port to listen on")
+def web(host: str | None, port: int | None) -> None:
     """Start the TodayTech Web Dashboard."""
+    import os
     import uvicorn
 
+    bind_host = host or os.environ.get("HOST", "0.0.0.0")
+    bind_port = port or int(os.environ.get("PORT", "8000"))
+
     console.print(
-        f"\n🚀 [bold green]Starting TodayTech Web Dashboard[/bold green] at http://{host}:{port}\n"
+        f"\n🚀 [bold green]Starting TodayTech Web Dashboard[/bold green] at http://{bind_host}:{bind_port}\n"
     )
-    uvicorn.run("todaytech.web.app:create_app", host=host, port=port, factory=True, reload=False)
+    uvicorn.run("todaytech.web.app:create_app", host=bind_host, port=bind_port, factory=True, reload=False)
 
 
 if __name__ == "__main__":

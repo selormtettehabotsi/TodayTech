@@ -229,11 +229,47 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        import os
         settings = get_settings()
         await init_db(settings.database_url)
         async with get_session() as session:
             await _seed_demo_if_empty(session)
+
+        # Dual mode: launch Telegram bot daemon if credentials are present
+        bot_app = None
+        run_bot = os.environ.get("ENABLE_BOT_IN_WEB", "1") != "0"
+        if run_bot and settings.telegram_bot_token and settings.telegram_user_id and not str(settings.telegram_bot_token).startswith("your"):
+            try:
+                from telegram.ext import Application, CommandHandler, MessageHandler, filters
+                from todaytech.bot.app import cmd_start, cmd_setup, handle_message
+                from todaytech.scheduler.jobs import setup_scheduler
+
+                bot_app = Application.builder().token(settings.telegram_bot_token).build()
+                bot_app.bot_data["settings"] = settings
+                bot_app.add_handler(CommandHandler("start", cmd_start))
+                bot_app.add_handler(CommandHandler("setup", cmd_setup))
+                bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+                profile = load_profile(settings.profile_path)
+                if profile:
+                    setup_scheduler(bot_app, settings, profile)
+
+                await bot_app.initialize()
+                await bot_app.start()
+                await bot_app.updater.start_polling(drop_pending_updates=True)
+                log.info("web.telegram_bot_active")
+            except Exception as exc:
+                log.warning("web.telegram_bot_start_failed", error=str(exc))
+
         yield
+
+        if bot_app:
+            try:
+                await bot_app.updater.stop()
+                await bot_app.stop()
+                await bot_app.shutdown()
+            except Exception:
+                pass
 
     app.router.lifespan_context = lifespan
 
