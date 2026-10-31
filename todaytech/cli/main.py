@@ -346,7 +346,9 @@ def opportunities(limit: int) -> None:
             )
 
         console.print(table)
-        console.print("\n💡 Run [bold]todaytech apply <ID>[/bold] to draft application materials.\n")
+        console.print(
+            "\n💡 Run [bold]todaytech apply <ID>[/bold] to draft application materials.\n"
+        )
 
     asyncio.run(_run())
 
@@ -371,7 +373,9 @@ def apply(opp_id: str) -> None:
         setup_logging(settings.log_level)
         await init_db(settings.database_url)
 
-        console.print(f"📝 [bold]Running Application Assistant for opportunity '{opp_id}'...[/bold]\n")
+        console.print(
+            f"📝 [bold]Running Application Assistant for opportunity '{opp_id}'...[/bold]\n"
+        )
         output = await run_application_assistant(opp_id, settings)
         console.print(output)
 
@@ -389,6 +393,7 @@ def apply(opp_id: str) -> None:
 def web(host: str | None, port: int | None) -> None:
     """Start the TodayTech Web Dashboard."""
     import os
+
     import uvicorn
 
     bind_host = host or os.environ.get("HOST", "0.0.0.0")
@@ -397,7 +402,9 @@ def web(host: str | None, port: int | None) -> None:
     console.print(
         f"\n🚀 [bold green]Starting TodayTech Web Dashboard[/bold green] at http://{bind_host}:{bind_port}\n"
     )
-    uvicorn.run("todaytech.web.app:create_app", host=bind_host, port=bind_port, factory=True, reload=False)
+    uvicorn.run(
+        "todaytech.web.app:create_app", host=bind_host, port=bind_port, factory=True, reload=False
+    )
 
 
 if __name__ == "__main__":

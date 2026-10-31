@@ -104,25 +104,29 @@ def _region_queries(profile: UserProfile) -> list[str]:
         country = profile.country
 
         # France-specific
-        queries.extend([
-            f"Eiffel Excellence Scholarship 2027 {field} application",
-            f"Campus France scholarship 2027 {country} STEM",
-            f"Charpak scholarship France {country} 2027 Masters",
-            f"Erasmus Mundus Joint Master {field} 2027 application",
-            f"Mastercard Foundation scholarship Europe 2027 Africa",
-            f"Mastercard Foundation Sciences Po 2027 Africa",
-            f"study in France scholarship 2027 {field} {country}",
-        ])
+        queries.extend(
+            [
+                f"Eiffel Excellence Scholarship 2027 {field} application",
+                f"Campus France scholarship 2027 {country} STEM",
+                f"Charpak scholarship France {country} 2027 Masters",
+                f"Erasmus Mundus Joint Master {field} 2027 application",
+                "Mastercard Foundation scholarship Europe 2027 Africa",
+                "Mastercard Foundation Sciences Po 2027 Africa",
+                f"study in France scholarship 2027 {field} {country}",
+            ]
+        )
 
         # Broader Europe
-        queries.extend([
-            f"DAAD scholarship {country} 2027 {field}",
-            f"Chevening scholarship {country} 2027 application",
-            f"Commonwealth scholarship {country} 2027 Masters {field}",
-            f"Netherlands Fellowship Programme {country} 2027 STEM",
-            f"Swiss Government Excellence Scholarship {country} 2027",
-            f"Europe scholarship {country} students {field} 2027",
-        ])
+        queries.extend(
+            [
+                f"DAAD scholarship {country} 2027 {field}",
+                f"Chevening scholarship {country} 2027 application",
+                f"Commonwealth scholarship {country} 2027 Masters {field}",
+                f"Netherlands Fellowship Programme {country} 2027 STEM",
+                f"Swiss Government Excellence Scholarship {country} 2027",
+                f"Europe scholarship {country} students {field} 2027",
+            ]
+        )
 
     return queries
 
@@ -147,18 +151,20 @@ def _linkedin_queries(profile: UserProfile) -> list[str]:
 
     if any(r in regions for r in ("europe", "france")):
         if "scholarship" in types:
-            queries.extend([
-                f"site:linkedin.com scholarship Europe France Africa {field} 2027",
-                f"site:linkedin.com Mastercard Foundation Scholars 2027 application",
-                f"site:linkedin.com Eiffel scholarship Erasmus Mundus 2027 Africa",
-            ])
+            queries.extend(
+                [
+                    f"site:linkedin.com scholarship Europe France Africa {field} 2027",
+                    "site:linkedin.com Mastercard Foundation Scholars 2027 application",
+                    "site:linkedin.com Eiffel scholarship Erasmus Mundus 2027 Africa",
+                ]
+            )
         if "fellowship" in types:
-            queries.append(f"site:linkedin.com cloud DevOps fellowship Africa Europe 2027")
+            queries.append("site:linkedin.com cloud DevOps fellowship Africa Europe 2027")
 
     if "fellowship" in types:
-        queries.append(f"site:linkedin.com software engineering fellowship 2027 apply")
+        queries.append("site:linkedin.com software engineering fellowship 2027 apply")
     if "internship" in types:
-        queries.append(f"site:linkedin.com AWS cloud DevOps scholarship internship 2027")
+        queries.append("site:linkedin.com AWS cloud DevOps scholarship internship 2027")
 
     return queries
 

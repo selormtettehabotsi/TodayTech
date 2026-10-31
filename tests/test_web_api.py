@@ -161,8 +161,9 @@ async def test_api_digest_horizons():
 
 @pytest.mark.asyncio
 async def test_api_drafts_and_downloads():
-    from pathlib import Path
     import shutil
+    from pathlib import Path
+
     drafts_dir = Path("data/drafts/test1234567890ab")
     drafts_dir.mkdir(parents=True, exist_ok=True)
     test_docx = drafts_dir / "motivation_letter.docx"
@@ -193,6 +194,7 @@ async def test_api_drafts_and_downloads():
 async def test_api_multiple_application_rows():
     """Verify that having multiple ApplicationRows or UserStateRows does not throw 500 error."""
     from todaytech.core.database import ApplicationRow, UserStateRow
+
     app = create_app()
     transport = ASGITransport(app=app)
 

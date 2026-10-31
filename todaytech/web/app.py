@@ -6,7 +6,6 @@ Provides REST APIs and serves the editorial web interface.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -230,6 +229,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import os
+
         settings = get_settings()
         await init_db(settings.database_url)
         async with get_session() as session:
@@ -238,10 +238,16 @@ def create_app() -> FastAPI:
         # Dual mode: launch Telegram bot daemon if credentials are present
         bot_app = None
         run_bot = os.environ.get("ENABLE_BOT_IN_WEB", "1") != "0"
-        if run_bot and settings.telegram_bot_token and settings.telegram_user_id and not str(settings.telegram_bot_token).startswith("your"):
+        if (
+            run_bot
+            and settings.telegram_bot_token
+            and settings.telegram_user_id
+            and not str(settings.telegram_bot_token).startswith("your")
+        ):
             try:
                 from telegram.ext import Application, CommandHandler, MessageHandler, filters
-                from todaytech.bot.app import cmd_start, cmd_setup, handle_message
+
+                from todaytech.bot.app import cmd_setup, cmd_start, handle_message
                 from todaytech.scheduler.jobs import setup_scheduler
 
                 bot_app = Application.builder().token(settings.telegram_bot_token).build()
@@ -535,12 +541,14 @@ def create_app() -> FastAPI:
         for p in sorted(drafts_dir.iterdir()):
             if p.is_file():
                 ext = p.suffix.lower().lstrip(".")
-                files.append({
-                    "name": p.name,
-                    "size_bytes": p.stat().st_size,
-                    "extension": ext,
-                    "download_url": f"/drafts/{external_id[:16]}/{p.name}",
-                })
+                files.append(
+                    {
+                        "name": p.name,
+                        "size_bytes": p.stat().st_size,
+                        "extension": ext,
+                        "download_url": f"/drafts/{external_id[:16]}/{p.name}",
+                    }
+                )
                 if ext == "md":
                     try:
                         text = p.read_text(encoding="utf-8")

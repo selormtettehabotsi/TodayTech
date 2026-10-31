@@ -111,12 +111,8 @@ class TestLinkedInQueries:
 
     def test_linkedin_includes_europe_france(self):
         queries = generate_queries(_profile_europe(["scholarship"]))
-        assert any(
-            "site:linkedin.com" in q and ("Europe" in q or "France" in q) for q in queries
-        )
+        assert any("site:linkedin.com" in q and ("Europe" in q or "France" in q) for q in queries)
 
     def test_linkedin_includes_mastercard(self):
         queries = generate_queries(_profile_europe(["scholarship"]))
-        assert any(
-            "site:linkedin.com" in q and "Mastercard" in q for q in queries
-        )
+        assert any("site:linkedin.com" in q and "Mastercard" in q for q in queries)

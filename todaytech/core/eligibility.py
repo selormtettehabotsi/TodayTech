@@ -70,7 +70,21 @@ def _check_field(opp: Opportunity, profile: UserProfile) -> tuple[EligibilityVer
     if user_field in required_lower or required_lower in user_field:
         return None
     # Check for broad STEM match
-    stem_fields = {"computer science", "engineering", "technology", "science", "stem", "ict", "mathematics", "digital", "software", "data", "informatics", "computing", "cybersecurity"}
+    stem_fields = {
+        "computer science",
+        "engineering",
+        "technology",
+        "science",
+        "stem",
+        "ict",
+        "mathematics",
+        "digital",
+        "software",
+        "data",
+        "informatics",
+        "computing",
+        "cybersecurity",
+    }
     if any(s in required_lower for s in stem_fields) and any(s in user_field for s in stem_fields):
         return None
     return EligibilityVerdict.CHECK, (
