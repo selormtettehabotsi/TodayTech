@@ -41,9 +41,9 @@ fi
 # 4. Create data folder
 mkdir -p data data/drafts
 
-# 5. Build and run containers
+# 5. Build and run containers (using sudo to avoid newgrp permission delay)
 echo "🔨 Building and launching TodayTech containers in background..."
-docker compose up -d --build
+sudo docker compose up -d --build
 
 # 6. Display IP and status
 PUBLIC_IP=$(curl -s https://ifconfig.me || echo "your-ec2-ip")
@@ -57,7 +57,7 @@ echo "🌐 Web Dashboard: http://${PUBLIC_IP}:8000"
 echo "🤖 Telegram Bot: Active & listening 24/7"
 echo ""
 echo "Helpful commands:"
-echo "  • View live logs:    docker compose logs -f"
-echo "  • Restart service:  docker compose restart"
-echo "  • Stop service:     docker compose down"
+echo "  • View live logs:    sudo docker compose logs -f"
+echo "  • Restart service:  sudo docker compose restart"
+echo "  • Stop service:     sudo docker compose down"
 echo "====================================================="

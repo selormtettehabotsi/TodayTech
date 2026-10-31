@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 24/7 Telegram Bot & Background Scheduler
   todaytech-bot:
