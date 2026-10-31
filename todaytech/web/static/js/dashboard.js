@@ -434,10 +434,64 @@ async function openAssistant(id) {
     `;
 
     document.getElementById('applyExternalLink').href = data.application_url || '#';
+    fetchDrafts(data.id);
   } catch (err) {
     console.error('Failed to open assistant', err);
     content.innerHTML = `<p style="color: var(--accent-terracotta-text); padding: 24px;">Failed to load opportunity details.</p>`;
   }
+}
+
+async function fetchDrafts(id) {
+  const draftContainer = document.getElementById('draftContainer');
+  if (!draftContainer) return;
+
+  try {
+    const res = await fetch(`/api/opportunity/${id}/drafts`);
+    const data = await res.json();
+    if (data.has_drafts && data.files && data.files.length > 0) {
+      renderDraftFiles(id, data.files, data.content);
+    }
+  } catch (err) {
+    console.debug('No drafts available yet:', err);
+  }
+}
+
+function renderDraftFiles(id, files, content) {
+  const draftContainer = document.getElementById('draftContainer');
+  if (!draftContainer) return;
+
+  let downloadButtons = '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">';
+  files.forEach(f => {
+    const isDocx = f.name.endsWith('.docx');
+    const icon = isDocx ? '📄' : '📝';
+    downloadButtons += `
+      <a href="${f.download_url}" download="${f.name}" class="btn btn-secondary btn-sm" 
+         style="display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 500;">
+        <span>${icon}</span>
+        <span>Download ${f.name}</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+      </a>
+    `;
+  });
+  downloadButtons += '</div>';
+
+  const displayText = content && content.trim() ? content : 'Draft files generated successfully. Use the download buttons above to get Word .docx and .md files on your device.';
+
+  draftContainer.innerHTML = `
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+      <span style="font-size: 12.5px; font-weight: 600; color: var(--accent-sage-text);">Materials Ready to Download</span>
+      <button class="btn-link" onclick="copyDraftText()" style="display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border: none; background: transparent;">
+        ${ICONS.copy}
+        <span id="copyBtnLabel">Copy Text</span>
+      </button>
+    </div>
+    ${downloadButtons}
+    <div class="draft-box" id="draftTextBox">${escapeHtml(displayText)}</div>
+  `;
 }
 
 async function generateDrafts(id) {
@@ -449,7 +503,7 @@ async function generateDrafts(id) {
   draftContainer.innerHTML = `
     <div style="padding: 24px; text-align: center; color: var(--text-muted); background: var(--bg-surface-subtle); border-radius: 8px;">
       <p style="font-weight: 500; margin-bottom: 6px;">Synthesizing requirements and profile experience...</p>
-      <p style="font-size: 12.5px;">This drafts materials into data/drafts/ as Markdown and Word DOCX.</p>
+      <p style="font-size: 12.5px;">Generating Markdown and Word DOCX drafts...</p>
     </div>
   `;
 
@@ -457,17 +511,8 @@ async function generateDrafts(id) {
     const res = await fetch(`/api/opportunity/${id}/apply`, { method: 'POST' });
     const result = await res.json();
 
-    draftContainer.innerHTML = `
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-        <span style="font-size: 12.5px; font-weight: 600; color: var(--accent-sage-text);">Materials Drafted Successfully</span>
-        <button class="btn-link" onclick="copyDraftText()" style="display: inline-flex; align-items: center; gap: 5px;">
-          ${ICONS.copy}
-          <span>Copy Text</span>
-        </button>
-      </div>
-      <div class="draft-box" id="draftTextBox">${escapeHtml(result.summary)}</div>
-    `;
-    showToast('Application drafts created in data/drafts/');
+    await fetchDrafts(id);
+    showToast('Application drafts created and ready to download!');
     loadStats();
     loadOpportunities();
     loadPipeline();
@@ -482,9 +527,56 @@ async function generateDrafts(id) {
 function copyDraftText() {
   const box = document.getElementById('draftTextBox');
   if (!box) return;
-  navigator.clipboard.writeText(box.textContent).then(() => {
+  const text = box.innerText || box.textContent;
+  if (!text || !text.trim()) {
+    showToast('No draft text to copy.');
+    return;
+  }
+
+  const copyLabel = document.getElementById('copyBtnLabel');
+  function onSuccess() {
     showToast('Copied draft materials to clipboard!');
-  });
+    if (copyLabel) {
+      const orig = copyLabel.textContent;
+      copyLabel.textContent = 'Copied!';
+      setTimeout(() => { copyLabel.textContent = orig; }, 2000);
+    }
+  }
+
+  // 1. Modern clipboard API (works on HTTPS or localhost)
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => fallbackCopy(text, onSuccess));
+  } else {
+    // 2. Robust fallback for HTTP / EC2 IP addresses on mobile and desktop
+    fallbackCopy(text, onSuccess);
+  }
+}
+
+function fallbackCopy(text, onSuccess) {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, 999999);
+    
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    if (successful) {
+      onSuccess();
+    } else {
+      showToast('Please select and copy text manually');
+    }
+  } catch (err) {
+    console.warn('Fallback copy error:', err);
+    showToast('Please select and copy text manually');
+  }
 }
 
 function closeDrawer() {

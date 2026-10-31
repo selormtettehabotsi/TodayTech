@@ -337,6 +337,8 @@ async def run_application_assistant(
     # Footer
     lines.append("**Next Steps:**")
     lines.append(f"  📁 Drafts saved to `{drafts_dir}`")
+    lines.append(f"  📥 Word Doc: `/drafts/{opp.external_id[:16]}/motivation_letter.docx`")
+    lines.append(f"  📥 Short Bio: `/drafts/{opp.external_id[:16]}/short_bio.docx`")
     lines.append("  ✏️ Review and personalize the drafts")
     if opp.application_url:
         lines.append(f"  🔗 Apply here: {opp.application_url}")

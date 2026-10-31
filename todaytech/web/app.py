@@ -15,7 +15,7 @@ import structlog
 import yaml
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -505,6 +505,90 @@ def create_app() -> FastAPI:
             "opportunity_id": external_id,
             "summary": result_text,
         }
+
+    @app.get("/api/opportunity/{external_id}/drafts")
+    async def get_opportunity_drafts(external_id: str) -> dict[str, Any]:
+        """List generated drafts and draft contents for an opportunity."""
+        base_dir = Path("data/drafts")
+        drafts_dir: Path | None = None
+        if base_dir.exists():
+            cand = base_dir / external_id[:16]
+            if cand.exists() and cand.is_dir():
+                drafts_dir = cand
+            else:
+                prefix = external_id[:8]
+                for p in base_dir.iterdir():
+                    if p.is_dir() and p.name.startswith(prefix):
+                        drafts_dir = p
+                        break
+
+        if not drafts_dir or not drafts_dir.exists() or not drafts_dir.is_dir():
+            return {"has_drafts": False, "files": [], "content": ""}
+
+        files = []
+        combined_text = []
+
+        for p in sorted(drafts_dir.iterdir()):
+            if p.is_file():
+                ext = p.suffix.lower().lstrip(".")
+                files.append({
+                    "name": p.name,
+                    "size_bytes": p.stat().st_size,
+                    "extension": ext,
+                    "download_url": f"/drafts/{external_id[:16]}/{p.name}",
+                })
+                if ext == "md":
+                    try:
+                        text = p.read_text(encoding="utf-8")
+                        combined_text.append(text)
+                    except Exception:
+                        pass
+
+        return {
+            "has_drafts": len(files) > 0,
+            "drafts_dir": str(drafts_dir),
+            "files": files,
+            "content": "\n\n---\n\n".join(combined_text),
+        }
+
+    @app.get("/api/opportunity/{external_id}/download/{filename}")
+    @app.get("/drafts/{external_id}/{filename}")
+    async def download_draft_file(external_id: str, filename: str) -> FileResponse:
+        """Download a generated draft file (.docx, .md, etc.)."""
+        clean_name = Path(filename).name
+        base_dir = Path("data/drafts")
+        drafts_dir: Path | None = None
+
+        if base_dir.exists():
+            cand = base_dir / external_id[:16]
+            if cand.exists() and cand.is_dir():
+                drafts_dir = cand
+            else:
+                prefix = external_id[:8]
+                for p in base_dir.iterdir():
+                    if p.is_dir() and p.name.startswith(prefix):
+                        drafts_dir = p
+                        break
+
+        if not drafts_dir:
+            raise HTTPException(status_code=404, detail="Draft directory not found")
+
+        file_path = drafts_dir / clean_name
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail=f"Draft file '{clean_name}' not found")
+
+        media_type = "application/octet-stream"
+        if clean_name.endswith(".docx"):
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif clean_name.endswith(".md") or clean_name.endswith(".txt"):
+            media_type = "text/markdown; charset=utf-8"
+
+        return FileResponse(
+            path=file_path,
+            filename=clean_name,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{clean_name}"'},
+        )
 
     async def _safe_scan() -> None:
         try:

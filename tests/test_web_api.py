@@ -157,3 +157,33 @@ async def test_api_digest_horizons():
         res_month = await client.get("/api/digest?timeframe=month")
         assert res_month.status_code == 200
         assert res_month.json()["timeframe"] == "month"
+
+
+@pytest.mark.asyncio
+async def test_api_drafts_and_downloads():
+    from pathlib import Path
+    import shutil
+    drafts_dir = Path("data/drafts/test1234567890ab")
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+    test_docx = drafts_dir / "motivation_letter.docx"
+    test_docx.write_bytes(b"PK fake docx content")
+    test_md = drafts_dir / "motivation_letter.md"
+    test_md.write_text("# Motivation Letter\nTest content", encoding="utf-8")
+
+    try:
+        app = create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.get("/api/opportunity/test1234567890ab/drafts")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["has_drafts"] is True
+            assert len(data["files"]) >= 2
+            assert "Test content" in data["content"]
+
+            res_dl = await client.get("/drafts/test1234567890ab/motivation_letter.docx")
+            assert res_dl.status_code == 200
+            assert res_dl.content == b"PK fake docx content"
+    finally:
+        if drafts_dir.exists():
+            shutil.rmtree(str(drafts_dir))
