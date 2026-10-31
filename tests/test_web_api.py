@@ -187,3 +187,25 @@ async def test_api_drafts_and_downloads():
     finally:
         if drafts_dir.exists():
             shutil.rmtree(str(drafts_dir))
+
+
+@pytest.mark.asyncio
+async def test_api_multiple_application_rows():
+    """Verify that having multiple ApplicationRows or UserStateRows does not throw 500 error."""
+    from todaytech.core.database import ApplicationRow, UserStateRow
+    app = create_app()
+    transport = ASGITransport(app=app)
+
+    async with get_session() as session:
+        session.add(ApplicationRow(opportunity_id="d41c7b2e9a0f5c63", status="drafting"))
+        session.add(ApplicationRow(opportunity_id="d41c7b2e9a0f5c63", status="submitted"))
+        session.add(UserStateRow(opportunity_id="d41c7b2e9a0f5c63", status="saved"))
+        session.add(UserStateRow(opportunity_id="d41c7b2e9a0f5c63", status="in_progress"))
+        await session.commit()
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/api/opportunity/d41c7b2e9a0f5c63")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["id"] == "d41c7b2e9a0f5c63"
+        assert data["has_drafts"] is True

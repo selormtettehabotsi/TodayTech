@@ -325,13 +325,21 @@ async def run_application_assistant(
 
     # Step 5: Track application
     async with get_session() as session:
-        app_row = ApplicationRow(
-            opportunity_id=opp.external_id,
-            status="drafting",
-            requirements_json=json.dumps(reqs),
-            drafts_dir=str(drafts_dir),
-        )
-        session.add(app_row)
+        stmt_exist = select(ApplicationRow).where(ApplicationRow.opportunity_id == opp.external_id)
+        res_exist = await session.execute(stmt_exist)
+        app_row = res_exist.scalars().first()
+        if app_row:
+            app_row.status = "drafting"
+            app_row.requirements_json = json.dumps(reqs)
+            app_row.drafts_dir = str(drafts_dir)
+        else:
+            app_row = ApplicationRow(
+                opportunity_id=opp.external_id,
+                status="drafting",
+                requirements_json=json.dumps(reqs),
+                drafts_dir=str(drafts_dir),
+            )
+            session.add(app_row)
         await session.commit()
 
     # Footer

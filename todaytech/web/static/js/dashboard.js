@@ -364,6 +364,9 @@ async function openAssistant(id) {
 
   try {
     const res = await fetch(`/api/opportunity/${id}`);
+    if (!res.ok) {
+      throw new Error(`Failed to load opportunity (${res.status})`);
+    }
     const data = await res.json();
     activeOpportunity = data;
 

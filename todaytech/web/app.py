@@ -436,14 +436,18 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=404, detail="Opportunity not found")
 
             user_state_res = await session.execute(
-                select(UserStateRow).where(UserStateRow.opportunity_id == external_id)
+                select(UserStateRow)
+                .where(UserStateRow.opportunity_id == opp.external_id)
+                .order_by(UserStateRow.id.desc())
             )
-            user_state = user_state_res.scalar_one_or_none()
+            user_state = user_state_res.scalars().first()
 
             app_res = await session.execute(
-                select(ApplicationRow).where(ApplicationRow.opportunity_id == external_id)
+                select(ApplicationRow)
+                .where(ApplicationRow.opportunity_id == opp.external_id)
+                .order_by(ApplicationRow.id.desc())
             )
-            app_row = app_res.scalar_one_or_none()
+            app_row = app_res.scalars().first()
 
         today = date.today()
         days_left = (opp.deadline - today).days if opp.deadline else None

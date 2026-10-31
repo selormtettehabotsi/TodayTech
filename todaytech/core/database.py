@@ -197,10 +197,15 @@ async def upsert_opportunity(session: AsyncSession, data: dict) -> tuple[Opportu
 
 
 async def get_opportunity_by_id(session: AsyncSession, external_id: str) -> OpportunityRow | None:
-    """Fetch a single opportunity by external ID."""
+    """Fetch a single opportunity by external ID (exact or prefix)."""
     stmt = select(OpportunityRow).where(OpportunityRow.external_id == external_id)
     result = await session.execute(stmt)
-    return result.scalar_one_or_none()
+    row = result.scalars().first()
+    if row is not None:
+        return row
+    stmt_prefix = select(OpportunityRow).where(OpportunityRow.external_id.startswith(external_id))
+    result_prefix = await session.execute(stmt_prefix)
+    return result_prefix.scalars().first()
 
 
 async def get_opportunities(
