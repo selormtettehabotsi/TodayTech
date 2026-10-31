@@ -18,3 +18,4 @@ services:
         sync: false
       - key: TELEGRAM_USER_ID
         sync: false
+

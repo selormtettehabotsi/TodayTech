@@ -99,12 +99,12 @@ async def _call_groq(api_key: str, prompt: str, system: str = "", json_mode: boo
 async def _call_openrouter(
     api_key: str, prompt: str, system: str = "", json_mode: bool = False
 ) -> str:
-    """Call OpenRouter (free models)."""
+    """Call OpenRouter (with fallback across active free models)."""
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/todaytech",
+        "HTTP-Referer": "https://github.com/selormtettehabotsi/TodayTech",
     }
 
     messages = []
@@ -112,20 +112,38 @@ async def _call_openrouter(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    body: dict[str, Any] = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "messages": messages,
-        "temperature": 0.3,
-        "max_tokens": 4096,
-    }
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
+    models = [
+        "poolside/laguna-s-2.1:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "dots-studio/dots-3-note-preview:free",
+        "poolside/laguna-xs-2.1:free",
+    ]
+    last_err: Exception | None = None
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    for model in models:
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(url, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                if "choices" in data and data["choices"]:
+                    return data["choices"][0]["message"]["content"]
+                raise RuntimeError(f"OpenRouter unexpected response: {data}")
+        except Exception as exc:
+            last_err = exc
+            log.warning("openrouter.model_failed", model=model, error=str(exc))
+            continue
+
+    raise last_err or RuntimeError("All OpenRouter models failed")
 
 
 async def _call_ollama(
