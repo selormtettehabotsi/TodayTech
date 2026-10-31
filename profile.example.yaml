@@ -1,45 +1,59 @@
 # ─────────────────────────────────────────────────────────────
-# TodayTech — User Profile
-# Copy this file to profile.yaml and fill in YOUR details.
-# NEVER commit your profile.yaml — it is gitignored.
-# Run `todaytech init` for an interactive setup wizard.
+# TodayTech — User Profile Template
+# Copy this file to profile.yaml and adjust your details.
 # ─────────────────────────────────────────────────────────────
 
 # ── Personal ─────────────────────────────────────────────────
-name: "Your Full Name"
-country: "Your Country"              # e.g. Ghana, Nigeria, India, USA
-citizenship:                          # list if dual/multi
-  - "Your Citizenship"
-city: "Your City"
+name: ""                                # Optional display name
+country: "Ghana"
+citizenship:
+  - "Ghanaian"
+city: "Kumasi"
 
 # ── Education ────────────────────────────────────────────────
-university: "Your University"
-level: "undergraduate"               # undergraduate | masters | phd | bootcamp | self-taught | graduated
-year: 2                              # year of study (1-6) or years since graduation
-field_of_study: "Computer Science"   # e.g. Computer Science, Electrical Engineering, Design
+university: "Kwame Nkrumah University of Science and Technology"
+level: "undergraduate"
+year: 3
+field_of_study: "Computer Science"
 
 # ── Skills & Interests ──────────────────────────────────────
 skills:
+  - "Java"
   - "Python"
   - "JavaScript"
-  - "Machine Learning"
+  - "AWS"
+  - "Cloud Computing"
+  - "DevOps"
+  - "CI/CD"
+  - "Docker"
+  - "Web Development"
+  - "Software Engineering"
+  - "Cybersecurity"
+
 interests:
-  - "AI for Social Good"
+  - "Cloud Architecture"
+  - "DevOps Engineering"
+  - "Software Development"
   - "Open Source"
-  - "EdTech"
-causes:                               # optional — social causes you care about
+  - "Cybersecurity"
+  - "Startup Tech"
+  - "AI/ML"
+
+causes:
   - "Education Access"
-  - "Climate Action"
+  - "Tech for Africa"
+  - "Youth Empowerment"
+  - "Digital Inclusion"
 
 # ── Languages ────────────────────────────────────────────────
 languages:
   - language: "English"
-    level: "native"                   # native | fluent | intermediate | basic
+    level: "native"
   - language: "French"
-    level: "intermediate"
+    level: "basic"
 
 # ── Opportunity Preferences ─────────────────────────────────
-opportunity_types:                    # which types to scan for
+opportunity_types:
   - hackathon
   - internship
   - scholarship
@@ -47,17 +61,19 @@ opportunity_types:                    # which types to scan for
   - grant
   - program
   - competition
-  - ambassador                        # campus / student ambassador programs
+  - ambassador
 
-regions:                              # regions you can travel to / apply in
-  - "Global"                          # or: Africa, Europe, North America, Asia, etc.
+regions:
+  - "Global"
   - "Africa"
+  - "Europe"
+  - "France"
 
-max_application_fee: 0                # max fee (USD) you're willing to pay; 0 = free only
+max_application_fee: 0                  # 0 = free only
 
 # ── Notification Settings ───────────────────────────────────
-digest_time: "08:00"                  # 24-hour format
-timezone: "UTC"                       # IANA timezone, e.g. Africa/Accra, America/New_York
+digest_time: "08:00"
+timezone: "Africa/Accra"
 
 # ── Scoring Weights (must sum to 100) ───────────────────────
 scoring_weights:
@@ -67,18 +83,11 @@ scoring_weights:
   effort: 15
 
 # ── Source Packs ─────────────────────────────────────────────
-# Enable community source packs from sources/packs/
-source_packs: []
-  # - ghana
-  # - nigeria
-  # - india
+source_packs:
+  - ghana
 
 # ── Writing Samples (optional) ──────────────────────────────
-# Paths to local files the application assistant uses to match your voice.
-# These stay on your machine and are never uploaded.
 writing_samples: []
-  # - "data/samples/personal_statement.txt"
-  # - "data/samples/blog_post.md"
 
 # ── CV (optional) ───────────────────────────────────────────
-cv_path: ""  # e.g. "data/cv.pdf" — used by the application assistant
+cv_path: ""
