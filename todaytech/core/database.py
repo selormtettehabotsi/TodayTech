@@ -146,7 +146,13 @@ async def init_db(database_url: str) -> None:
 
     # Ensure data/ dir exists for SQLite
     if "sqlite" in database_url:
-        Path("data").mkdir(parents=True, exist_ok=True)
+        try:
+            clean_path = database_url.split(":///")[-1]
+            if clean_path:
+                Path(clean_path).parent.mkdir(parents=True, exist_ok=True)
+            Path("data").mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
     _engine = create_async_engine(database_url, echo=False)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
