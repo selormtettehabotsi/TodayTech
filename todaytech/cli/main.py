@@ -23,6 +23,7 @@ import click
 import yaml
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.table import Table
 
 console = Console(force_terminal=True, legacy_windows=False)
 
@@ -297,6 +298,82 @@ def digest(notify: bool) -> None:
                 console.print(
                     "\n[yellow]⚠️ Cannot send notification: TELEGRAM_BOT_TOKEN or TELEGRAM_USER_ID not configured.[/yellow]"
                 )
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# todaytech opportunities
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="opportunities")
+@click.option("--limit", default=25, help="Number of opportunities to display")
+def opportunities(limit: int) -> None:
+    """List stored opportunities with match scores and IDs."""
+
+    async def _run() -> None:
+        from todaytech.core.config import get_settings
+        from todaytech.core.database import get_opportunities, get_session, init_db
+        from todaytech.core.logging import setup_logging
+
+        settings = get_settings()
+        setup_logging(settings.log_level)
+        await init_db(settings.database_url)
+
+        async with get_session() as session:
+            opps = await get_opportunities(session, limit=limit)
+
+        if not opps:
+            console.print("📭 No opportunities found. Run [bold]todaytech scan[/bold] first.")
+            return
+
+        table = Table(title="🎯 TodayTech Matched Opportunities")
+        table.add_column("ID", style="cyan", no_wrap=True)
+        table.add_column("Score", style="bold green", justify="right")
+        table.add_column("Type", style="magenta")
+        table.add_column("Title", style="white")
+        table.add_column("Deadline", style="yellow")
+
+        for opp in opps:
+            deadline_str = str(opp.deadline) if opp.deadline else "Rolling/TBA"
+            table.add_row(
+                opp.external_id[:8],
+                f"{opp.fit_score}/100",
+                opp.type.capitalize(),
+                opp.title[:55],
+                deadline_str,
+            )
+
+        console.print(table)
+        console.print("\n💡 Run [bold]todaytech apply <ID>[/bold] to draft application materials.\n")
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# todaytech apply
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="apply")
+@click.argument("opp_id")
+def apply(opp_id: str) -> None:
+    """Run the application assistant to generate tailored application drafts."""
+
+    async def _run() -> None:
+        from todaytech.apply.assistant import run_application_assistant
+        from todaytech.core.config import get_settings
+        from todaytech.core.database import init_db
+        from todaytech.core.logging import setup_logging
+
+        settings = get_settings()
+        setup_logging(settings.log_level)
+        await init_db(settings.database_url)
+
+        console.print(f"📝 [bold]Running Application Assistant for opportunity '{opp_id}'...[/bold]\n")
+        output = await run_application_assistant(opp_id, settings)
+        console.print(output)
 
     asyncio.run(_run())
 
