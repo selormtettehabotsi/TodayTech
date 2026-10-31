@@ -262,7 +262,8 @@ def create_app() -> FastAPI:
 
                 await bot_app.initialize()
                 await bot_app.start()
-                await bot_app.updater.start_polling(drop_pending_updates=True)
+                if bot_app.updater is not None:
+                    await bot_app.updater.start_polling(drop_pending_updates=True)
                 log.info("web.telegram_bot_active")
             except Exception as exc:
                 log.warning("web.telegram_bot_start_failed", error=str(exc))
@@ -271,7 +272,8 @@ def create_app() -> FastAPI:
 
         if bot_app:
             try:
-                await bot_app.updater.stop()
+                if bot_app.updater is not None:
+                    await bot_app.updater.stop()
                 await bot_app.stop()
                 await bot_app.shutdown()
             except Exception:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import Field, field_validator
@@ -76,11 +77,11 @@ class Settings(BaseSettings):
 
     @field_validator("telegram_api_id", "telegram_user_id", "imap_port", mode="before")
     @classmethod
-    def _coerce_empty_int(cls, v: object, info) -> int:
+    def _coerce_empty_int(cls, v: Any, info: Any) -> int:
         if v is None or v == "":
             return 993 if info.field_name == "imap_port" else 0
         try:
-            return int(v)
+            return int(str(v).strip())
         except (ValueError, TypeError):
             return 0
 
