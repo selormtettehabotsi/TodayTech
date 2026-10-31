@@ -5,6 +5,8 @@ Provides REST APIs and serves the editorial web interface.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -225,12 +227,15 @@ def create_app() -> FastAPI:
     TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    @app.on_event("startup")
-    async def on_startup() -> None:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
         settings = get_settings()
         await init_db(settings.database_url)
         async with get_session() as session:
             await _seed_demo_if_empty(session)
+        yield
+
+    app.router.lifespan_context = lifespan
 
     @app.get("/", response_class=HTMLResponse)
     async def get_index() -> HTMLResponse:

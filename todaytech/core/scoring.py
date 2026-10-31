@@ -79,6 +79,12 @@ def _score_benefit(opp: Opportunity) -> int:
         "job offer",
         "full-time",
         "mentorship",
+        "tuition",
+        "living allowance",
+        "airfare",
+        "travel",
+        "accommodation",
+        "housing",
     ]
     medium_value_keywords = [
         "certificate",
@@ -89,6 +95,9 @@ def _score_benefit(opp: Opportunity) -> int:
         "discount",
         "swag",
         "recognition",
+        "visa support",
+        "health insurance",
+        "monthly allowance",
     ]
 
     for kw in high_value_keywords:

@@ -47,7 +47,7 @@ def generate_queries(profile: UserProfile) -> list[str]:
             continue
 
         # Base query
-        queries.append(f"{opp_type} {profile.field_of_study} 2025 2026")
+        queries.append(f"{opp_type} {profile.field_of_study} 2026 2027")
 
         # Country-specific
         if profile.country:
@@ -58,19 +58,18 @@ def generate_queries(profile: UserProfile) -> list[str]:
 
     # Skill-based queries
     for skill in profile.skills[:5]:
-        queries.append(f"hackathon {skill} 2025 open")
+        queries.append(f"hackathon {skill} 2027 open")
         queries.append(f"scholarship {skill} students")
 
     # Interest-based queries
     for interest in profile.interests[:3]:
         queries.append(f"opportunities {interest} students {profile.country}")
 
-    # Site-specific queries for LinkedIn/Facebook
-    if profile.country:
-        queries.append(
-            f"site:linkedin.com scholarship {profile.country} students {profile.field_of_study}"
-        )
-        queries.append(f"site:linkedin.com internship {profile.field_of_study} {profile.country}")
+    # Region-specific queries (Europe / France etc.)
+    queries.extend(_region_queries(profile))
+
+    # Site-specific queries for LinkedIn
+    queries.extend(_linkedin_queries(profile))
 
     return queries
 
@@ -78,14 +77,89 @@ def generate_queries(profile: UserProfile) -> list[str]:
 def _ambassador_queries(profile: UserProfile) -> list[str]:
     """Queries for campus/student ambassador programs run by tech companies and communities."""
     queries = [
-        "tech campus ambassador program 2026 apply students",
-        "student ambassador program tech company university 2026",
-        "developer student community lead application 2026",
+        "tech campus ambassador program 2027 apply students",
+        "student ambassador program tech company university 2027",
+        "developer student community lead application 2027",
+        "Microsoft Learn Student Ambassador 2027 apply Azure cloud",
+        "GitHub Campus Expert 2027 application",
+        "AWS Student Builder Group Leader 2027",
+        "Google Developer Student Club lead 2027 apply",
         f"campus ambassador {profile.field_of_study} students apply",
     ]
     if profile.country:
         queries.append(f"campus ambassador program {profile.country} university tech")
         queries.append(f"site:linkedin.com campus ambassador tech {profile.country}")
+    return queries
+
+
+def _region_queries(profile: UserProfile) -> list[str]:
+    """Generate queries for opportunities in specific target regions from the user profile."""
+    queries: list[str] = []
+    regions = [r.lower() for r in profile.regions]
+    types = profile.opportunity_types
+    has_scholarship = "scholarship" in types or "fellowship" in types
+
+    if any(r in regions for r in ("europe", "france", "global")) and has_scholarship:
+        field = profile.field_of_study
+        country = profile.country
+
+        # France-specific
+        queries.extend([
+            f"Eiffel Excellence Scholarship 2027 {field} application",
+            f"Campus France scholarship 2027 {country} STEM",
+            f"Charpak scholarship France {country} 2027 Masters",
+            f"Erasmus Mundus Joint Master {field} 2027 application",
+            f"Mastercard Foundation scholarship Europe 2027 Africa",
+            f"Mastercard Foundation Sciences Po 2027 Africa",
+            f"study in France scholarship 2027 {field} {country}",
+        ])
+
+        # Broader Europe
+        queries.extend([
+            f"DAAD scholarship {country} 2027 {field}",
+            f"Chevening scholarship {country} 2027 application",
+            f"Commonwealth scholarship {country} 2027 Masters {field}",
+            f"Netherlands Fellowship Programme {country} 2027 STEM",
+            f"Swiss Government Excellence Scholarship {country} 2027",
+            f"Europe scholarship {country} students {field} 2027",
+        ])
+
+    return queries
+
+
+def _linkedin_queries(profile: UserProfile) -> list[str]:
+    """Generate site:linkedin.com queries to surface opportunities posted on LinkedIn."""
+    queries: list[str] = []
+    field = profile.field_of_study
+    country = profile.country
+    regions = [r.lower() for r in profile.regions]
+    types = profile.opportunity_types
+
+    if country:
+        if "scholarship" in types:
+            queries.append(f"site:linkedin.com scholarship {country} students {field} 2027")
+        if "internship" in types:
+            queries.append(f"site:linkedin.com internship {field} {country} 2027")
+        if "fellowship" in types:
+            queries.append(f"site:linkedin.com fellowship {country} technology {field} 2027")
+        if "ambassador" in types:
+            queries.append(f"site:linkedin.com ambassador program tech {country} 2027")
+
+    if any(r in regions for r in ("europe", "france")):
+        if "scholarship" in types:
+            queries.extend([
+                f"site:linkedin.com scholarship Europe France Africa {field} 2027",
+                f"site:linkedin.com Mastercard Foundation Scholars 2027 application",
+                f"site:linkedin.com Eiffel scholarship Erasmus Mundus 2027 Africa",
+            ])
+        if "fellowship" in types:
+            queries.append(f"site:linkedin.com cloud DevOps fellowship Africa Europe 2027")
+
+    if "fellowship" in types:
+        queries.append(f"site:linkedin.com software engineering fellowship 2027 apply")
+    if "internship" in types:
+        queries.append(f"site:linkedin.com AWS cloud DevOps scholarship internship 2027")
+
     return queries
 
 

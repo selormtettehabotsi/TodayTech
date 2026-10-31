@@ -11,7 +11,7 @@
 
 pack:
   name: "Ghana"
-  description: "Scholarships, hackathons, and programs for Ghanaian students"
+  description: "Scholarships, hackathons, fellowships, ambassador programs, and Europe/France opportunities for Ghanaian students"
   country: "Ghana"
   maintained_by: "TodayTech Community"
 
@@ -19,76 +19,195 @@ sources:
   # ── Scholarship Portals ────────────────────────────────────
   - name: "Ghana Scholarship Secretariat"
     type: search_query
-    value: "Ghana Scholarship Secretariat application open"
+    value: "Ghana Scholarship Secretariat application open 2027"
     tags: [scholarship, government]
 
   - name: "GetFundedAfrica Ghana"
     type: search_query
-    value: "GetFundedAfrica Ghana scholarship grant"
+    value: "GetFundedAfrica Ghana scholarship grant 2027"
     tags: [scholarship, grant]
 
   - name: "Mastercard Foundation Scholars"
     type: search_query
-    value: "Mastercard Foundation Scholars Program Ghana application"
+    value: "Mastercard Foundation Scholars Program Ghana application 2027"
     tags: [scholarship, fully-funded]
+
+  - name: "Mastercard Foundation KNUST"
+    type: search_query
+    value: "Mastercard Foundation Scholars KNUST 2027 application undergraduate"
+    tags: [scholarship, fully-funded, university]
+
+  - name: "Mastercard Foundation Ashesi"
+    type: search_query
+    value: "Mastercard Foundation Ashesi University scholarship 2027"
+    tags: [scholarship, fully-funded, university]
 
   # ── University Sources ─────────────────────────────────────
   - name: "University of Ghana Scholarships"
     type: search_query
-    value: "University of Ghana scholarship 2025 application"
+    value: "University of Ghana scholarship 2027 application"
     tags: [scholarship, university]
 
   - name: "KNUST Scholarships"
     type: search_query
-    value: "KNUST scholarship opportunity 2025"
+    value: "KNUST scholarship opportunity 2027 computer science"
     tags: [scholarship, university]
 
   - name: "Ashesi University Scholarships"
     type: search_query
-    value: "Ashesi University scholarship financial aid"
+    value: "Ashesi University scholarship financial aid 2027"
     tags: [scholarship, university]
+
+  # ── Europe / France from Ghana ─────────────────────────────
+  - name: "Campus France Ghana"
+    type: search_query
+    value: "Campus France Ghana scholarship 2027 Masters computer science STEM"
+    tags: [scholarship, france]
+
+  - name: "Eiffel Scholarship Ghana"
+    type: search_query
+    value: "Eiffel Excellence Scholarship Ghana 2027 computer science application"
+    tags: [scholarship, france, fully-funded]
+
+  - name: "Erasmus Mundus Ghana"
+    type: search_query
+    value: "Erasmus Mundus scholarship Ghana 2027 application computer science"
+    tags: [scholarship, europe, fully-funded]
+
+  - name: "French Embassy Ghana Scholarship"
+    type: search_query
+    value: "French Embassy Ghana scholarship 2027 STEM Masters"
+    tags: [scholarship, france]
+
+  - name: "Charpak Ghana"
+    type: search_query
+    value: "Charpak scholarship Ghana France 2027 engineering computer science"
+    tags: [scholarship, france]
+
+  - name: "Netherlands Fellowship Ghana"
+    type: search_query
+    value: "Netherlands Fellowship Programme Ghana 2027 application STEM"
+    tags: [scholarship, europe]
+
+  - name: "Swiss Government Scholarship Ghana"
+    type: search_query
+    value: "Swiss Government Excellence Scholarship Ghana 2027 computer science"
+    tags: [scholarship, europe, fully-funded]
+
+  # ── Ambassador Programs (Ghana-specific) ───────────────────
+  - name: "Microsoft Ambassador Ghana"
+    type: search_query
+    value: "Microsoft Learn Student Ambassador Ghana KNUST 2027"
+    tags: [ambassador, tech, cloud]
+
+  - name: "GitHub Campus Expert Ghana"
+    type: search_query
+    value: "GitHub Campus Expert Ghana 2027 application"
+    tags: [ambassador, tech]
+
+  - name: "AWS Community Builder Ghana"
+    type: search_query
+    value: "AWS Community Builder Student Ghana cloud 2027"
+    tags: [ambassador, tech, cloud, aws]
+
+  - name: "Google Developer Student Club KNUST"
+    type: search_query
+    value: "Google Developer Student Club KNUST lead application 2027"
+    tags: [ambassador, tech, google]
+
+  # ── Fellowships (Ghana / Africa) ───────────────────────────
+  - name: "ALX Software Engineering"
+    type: search_query
+    value: "ALX Software Engineering programme 2027 Africa application"
+    tags: [fellowship, tech, africa]
+
+  - name: "Africa Tech Fellowship"
+    type: search_query
+    value: "Africa technology fellowship software developer 2027 application"
+    tags: [fellowship, tech, africa]
+
+  - name: "Andela Fellowship"
+    type: search_query
+    value: "Andela developer fellowship Africa 2027 application"
+    tags: [fellowship, tech, africa]
 
   # ── Tech Communities ───────────────────────────────────────
   - name: "Ghana Tech Community"
     type: search_query
-    value: "Ghana tech hackathon 2025"
+    value: "Ghana tech hackathon 2027 computer science"
     tags: [hackathon, tech]
 
   - name: "DevFest Ghana"
     type: search_query
-    value: "DevFest Ghana Google Developer"
+    value: "DevFest Ghana Google Developer 2027"
     tags: [hackathon, tech, google]
 
   - name: "Ghana AI/ML"
     type: search_query
-    value: "Ghana AI machine learning program fellowship"
+    value: "Ghana AI machine learning program fellowship cloud 2027"
     tags: [program, ai]
+
+  - name: "Ghana Cybersecurity"
+    type: search_query
+    value: "cybersecurity program Ghana 2027 scholarship training"
+    tags: [program, cybersecurity]
 
   # ── Regional Opportunities ─────────────────────────────────
   - name: "Africa-wide Scholarships"
     type: search_query
-    value: "Africa scholarship undergraduate 2025 open"
+    value: "Africa scholarship undergraduate 2027 open STEM"
     tags: [scholarship, africa]
 
   - name: "West Africa Hackathons"
     type: search_query
-    value: "West Africa hackathon technology 2025"
+    value: "West Africa hackathon technology 2027"
     tags: [hackathon, africa]
 
   - name: "DAAD Ghana"
     type: search_query
-    value: "DAAD scholarship Ghana application"
-    tags: [scholarship, germany]
+    value: "DAAD scholarship Ghana 2027 application computer science"
+    tags: [scholarship, germany, europe]
 
   - name: "Chevening Ghana"
     type: search_query
-    value: "Chevening scholarship Ghana application open"
-    tags: [scholarship, uk]
+    value: "Chevening scholarship Ghana application open 2027"
+    tags: [scholarship, uk, europe]
 
   - name: "Fulbright Ghana"
     type: search_query
-    value: "Fulbright scholarship Ghana application"
+    value: "Fulbright scholarship Ghana 2027 application STEM"
     tags: [scholarship, usa]
+
+  - name: "Commonwealth Scholarship Ghana"
+    type: search_query
+    value: "Commonwealth scholarship Ghana 2027 Masters computer science"
+    tags: [scholarship, uk, europe]
+
+  # ── LinkedIn Queries (Ghana-specific) ──────────────────────
+  - name: "LinkedIn Ghana Scholarships"
+    type: search_query
+    value: "site:linkedin.com scholarship Ghana KNUST 2027 students"
+    tags: [scholarship, linkedin]
+
+  - name: "LinkedIn Ghana Ambassador"
+    type: search_query
+    value: "site:linkedin.com student ambassador program Ghana tech 2027"
+    tags: [ambassador, linkedin]
+
+  - name: "LinkedIn Ghana Fellowship"
+    type: search_query
+    value: "site:linkedin.com fellowship Ghana technology developer 2027"
+    tags: [fellowship, linkedin]
+
+  - name: "LinkedIn France Ghana Scholarship"
+    type: search_query
+    value: "site:linkedin.com France scholarship Ghana Africa 2027 Masters"
+    tags: [scholarship, linkedin, france]
+
+  - name: "LinkedIn Europe Ghana Opportunity"
+    type: search_query
+    value: "site:linkedin.com Europe scholarship fellowship Ghana Africa computer science 2027"
+    tags: [scholarship, fellowship, linkedin, europe]
 
   # ── Subreddits ─────────────────────────────────────────────
   - name: "r/ghana"
@@ -96,8 +215,23 @@ sources:
     value: "ghana"
     tags: [general, community]
 
+  - name: "r/StudyAbroad"
+    type: subreddit
+    value: "studyAbroad"
+    tags: [scholarship, europe]
+
   # ── RSS Feeds ──────────────────────────────────────────────
   - name: "Opportunity Desk Africa"
     type: rss
     value: "https://www.opportunitydesk.org/category/africa/feed/"
     tags: [scholarship, fellowship, africa]
+
+  - name: "Opportunities For Africans"
+    type: rss
+    value: "https://www.opportunitiesforafricans.com/feed/"
+    tags: [scholarship, fellowship, africa]
+
+  - name: "After School Africa"
+    type: rss
+    value: "https://www.afterschoolafrica.com/feed/"
+    tags: [scholarship, fellowship, africa, europe]

@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  todaytech:
+  # 24/7 Telegram Bot & Background Scheduler
+  todaytech-bot:
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,11 +11,8 @@ services:
     env_file:
       - .env
     volumes:
-      # Local state & generated drafts
       - ./data:/app/data
-      # User eligibility profile
       - ./profile.yaml:/app/profile.yaml:ro
-      # Custom sources configuration
       - ./sources.yaml:/app/sources.yaml:ro
       - ./sources/packs:/app/sources/packs:ro
     environment:
@@ -22,36 +20,27 @@ services:
       - TODAYTECH_PROFILE=/app/profile.yaml
       - TODAYTECH_SOURCES=/app/sources.yaml
       - PYTHONUNBUFFERED=1
-    command: ["bot", "run"]
+    command: ["run"]
 
-  # Optional background scheduler runner (if running separate from bot)
-  # todaytech-scheduler:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: todaytech-scheduler
-  #   restart: unless-stopped
-  #   env_file:
-  #     - .env
-  #   volumes:
-  #     - ./data:/app/data
-  #     - ./profile.yaml:/app/profile.yaml:ro
-  #     - ./sources.yaml:/app/sources.yaml:ro
-  #   command: ["scheduler", "run"]
-
-  # Optional PostgreSQL database service (uncomment to switch from SQLite)
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: todaytech-postgres
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_USER: todaytech
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_env}
-  #     POSTGRES_DB: todaytech
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
-  #   ports:
-  #     - "5432:5432"
-
-# volumes:
-#   pgdata:
+  # Web Dashboard Interface (accessible via browser)
+  todaytech-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: todaytech-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./profile.yaml:/app/profile.yaml:ro
+      - ./sources.yaml:/app/sources.yaml:ro
+      - ./sources/packs:/app/sources/packs:ro
+    environment:
+      - TODAYTECH_DATA_DIR=/app/data
+      - TODAYTECH_PROFILE=/app/profile.yaml
+      - TODAYTECH_SOURCES=/app/sources.yaml
+      - PYTHONUNBUFFERED=1
+    command: ["web", "--host", "0.0.0.0", "--port", "8000"]

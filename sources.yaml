@@ -21,15 +21,145 @@ sources:
   # These are run through your configured search APIs.
   - name: "Tech Internships"
     type: search_query
-    value: "tech internship 2025 open application"
+    value: "tech internship 2027 open application"
     enabled: true
     tags: [internship]
 
   - name: "STEM Scholarships"
     type: search_query
-    value: "STEM scholarship 2025 undergraduate application open"
+    value: "STEM scholarship 2027 undergraduate application open"
     enabled: true
     tags: [scholarship]
+
+  # ── Europe / France Scholarships & Fellowships ─────────────
+  - name: "Eiffel Excellence Scholarship"
+    type: search_query
+    value: "Eiffel Excellence Scholarship Program 2027 application computer science STEM"
+    enabled: true
+    tags: [scholarship, france, fully-funded]
+
+  - name: "Erasmus Mundus CS"
+    type: search_query
+    value: "Erasmus Mundus Joint Master computer science 2027 application Africa"
+    enabled: true
+    tags: [scholarship, europe, fully-funded]
+
+  - name: "Campus France Scholarships"
+    type: search_query
+    value: "Campus France scholarship 2027 Africa STEM computer science"
+    enabled: true
+    tags: [scholarship, france]
+
+  - name: "Charpak Scholarship"
+    type: search_query
+    value: "Charpak scholarship France Africa 2027 Masters engineering application"
+    enabled: true
+    tags: [scholarship, france]
+
+  - name: "Mastercard Foundation Europe"
+    type: search_query
+    value: "Mastercard Foundation Scholars Program 2027 Europe Africa application"
+    enabled: true
+    tags: [scholarship, fellowship, fully-funded]
+
+  - name: "Mastercard Foundation Sciences Po"
+    type: search_query
+    value: "Mastercard Foundation Sciences Po Paris scholarship Africa 2027"
+    enabled: true
+    tags: [scholarship, france, fully-funded]
+
+  - name: "Mastercard Foundation CMU Africa"
+    type: search_query
+    value: "Mastercard Foundation Carnegie Mellon Africa computer science 2027"
+    enabled: true
+    tags: [scholarship, fully-funded, tech]
+
+  - name: "Mastercard Foundation Edinburgh Cambridge"
+    type: search_query
+    value: "Mastercard Foundation scholarship Edinburgh Cambridge Africa 2027 STEM"
+    enabled: true
+    tags: [scholarship, europe, fully-funded]
+
+  # ── Ambassador Programs ────────────────────────────────────
+  - name: "Microsoft Learn Student Ambassador"
+    type: search_query
+    value: "Microsoft Learn Student Ambassador program 2027 apply Azure cloud"
+    enabled: true
+    tags: [ambassador, tech, cloud]
+
+  - name: "GitHub Campus Expert"
+    type: search_query
+    value: "GitHub Campus Expert program 2027 application open source"
+    enabled: true
+    tags: [ambassador, tech, open-source]
+
+  - name: "Google Developer Student Clubs"
+    type: search_query
+    value: "Google Developer Student Clubs lead application 2027 Africa"
+    enabled: true
+    tags: [ambassador, tech, google]
+
+  - name: "AWS Student Builder"
+    type: search_query
+    value: "AWS Student Builder Group Leader cloud DevOps 2027 application"
+    enabled: true
+    tags: [ambassador, tech, cloud, aws]
+
+  # ── Fellowships ────────────────────────────────────────────
+  - name: "MLH Fellowship"
+    type: search_query
+    value: "MLH Fellowship 2027 software engineering open source application"
+    enabled: true
+    tags: [fellowship, tech]
+
+  - name: "Google Student Researcher EMEA"
+    type: search_query
+    value: "Google Student Researcher program EMEA 2027 Africa computer science"
+    enabled: true
+    tags: [fellowship, tech, google]
+
+  - name: "Africa Tech Fellowships"
+    type: search_query
+    value: "technology fellowship Africa 2027 software engineering cloud computing"
+    enabled: true
+    tags: [fellowship, tech, africa]
+
+  # ── LinkedIn-sourced Opportunities ─────────────────────────
+  - name: "LinkedIn Scholarships Europe"
+    type: search_query
+    value: "site:linkedin.com scholarship Europe France 2027 African students computer science"
+    enabled: true
+    tags: [scholarship, linkedin, europe]
+
+  - name: "LinkedIn Fellowships Tech"
+    type: search_query
+    value: "site:linkedin.com fellowship technology 2027 Africa application open"
+    enabled: true
+    tags: [fellowship, linkedin]
+
+  - name: "LinkedIn Ambassador Programs"
+    type: search_query
+    value: "site:linkedin.com campus ambassador program tech 2027 students apply"
+    enabled: true
+    tags: [ambassador, linkedin]
+
+  - name: "LinkedIn Mastercard Foundation"
+    type: search_query
+    value: "site:linkedin.com Mastercard Foundation Scholars 2027 application"
+    enabled: true
+    tags: [scholarship, linkedin, fully-funded]
+
+  - name: "LinkedIn Cloud DevOps Opportunities"
+    type: search_query
+    value: "site:linkedin.com cloud computing DevOps internship fellowship 2027 Africa"
+    enabled: true
+    tags: [internship, fellowship, linkedin, cloud]
+
+  - name: "LinkedIn France Study Opportunities"
+    type: search_query
+    value: "site:linkedin.com study France scholarship fellowship 2027 Africa STEM"
+    enabled: true
+    tags: [scholarship, linkedin, france]
 
   # ── Subreddits ─────────────────────────────────────────────
   # Requires Reddit API credentials in .env
@@ -45,7 +175,7 @@ sources:
     enabled: true
     tags: [hackathon]
 
-  # ── Telegram Channels ─────────────────────────────────────
+  # ── Telegram Channels ──────────────────────────────────────
   # Requires Telegram API credentials in .env
   # - name: "Opportunities Channel"
   #   type: telegram_channel

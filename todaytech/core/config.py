@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from todaytech.core.models import UserProfile
@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     sources_path: Path = Field(default=Path("sources.yaml"))
     packs_dir: Path = Field(default=Path("sources/packs"))
     data_dir: Path = Field(default=Path("data"))
+
+    @field_validator("telegram_api_id", "telegram_user_id", "imap_port", mode="before")
+    @classmethod
+    def _coerce_empty_int(cls, v: object, info) -> int:
+        if v is None or v == "":
+            return 993 if info.field_name == "imap_port" else 0
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
 
     # ── Validation helpers ───────────────────────────────────
 
