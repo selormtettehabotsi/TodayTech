@@ -23,26 +23,37 @@ log = structlog.get_logger()
 
 
 async def _call_gemini(api_key: str, prompt: str, system: str = "", json_mode: bool = False) -> str:
-    """Call Google Gemini API (free tier)."""
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    headers = {"Content-Type": "application/json"}
-    params = {"key": api_key}
+    """Call Google Gemini API with automatic model fallback."""
+    models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]
+    last_err = None
 
-    contents = []
-    if system:
-        contents.append({"role": "user", "parts": [{"text": system}]})
-        contents.append({"role": "model", "parts": [{"text": "Understood."}]})
-    contents.append({"role": "user", "parts": [{"text": prompt}]})
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": api_key}
 
-    body: dict[str, Any] = {"contents": contents}
-    if json_mode:
-        body["generationConfig"] = {"responseMimeType": "application/json"}
+        contents = []
+        if system:
+            contents.append({"role": "user", "parts": [{"text": system}]})
+            contents.append({"role": "model", "parts": [{"text": "Understood."}]})
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, headers=headers, params=params, json=body)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        body: dict[str, Any] = {"contents": contents}
+        if json_mode:
+            body["generationConfig"] = {"responseMimeType": "application/json"}
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(url, headers=headers, params=params, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as exc:
+            last_err = exc
+            log.warning("gemini.model_failed", model=model, error=str(exc))
+            continue
+
+    raise last_err or RuntimeError("All Gemini models failed")
 
 
 async def _call_groq(api_key: str, prompt: str, system: str = "", json_mode: bool = False) -> str:
