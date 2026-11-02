@@ -1,3 +1,20 @@
+function formatDeadlineDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const monthIndex = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${months[monthIndex]} ${day}, ${year}`;
+    }
+    return dateStr;
+  } catch (e) {
+    return dateStr;
+  }
+}
+
 /**
  * TodayTech Dashboard Logic
  * Clean Vanilla JS with SVG icons, interactive filtering, TechHot Digest, and modal controls.
@@ -212,15 +229,24 @@ async function loadPipeline() {
 function renderCard(opp) {
   const typeClass = `type-${opp.type.toLowerCase()}`;
   
-  let deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} ${opp.deadline || 'Open enrollment'}</span>`;
-  if (opp.days_left !== null && opp.days_left !== undefined) {
-    if (opp.days_left <= 3) {
-      deadlineBadge = `<span class="tag-urgent">${ICONS.calendar} ${opp.days_left}d left (${opp.deadline})</span>`;
-    } else if (opp.days_left <= 7) {
-      deadlineBadge = `<span class="tag-urgent" style="background:#FDF7ED; color:#C88A32; border-color:#F7E8CE;">${ICONS.calendar} ${opp.days_left}d left</span>`;
+  let deadlineBadge = '';
+  if (opp.deadline) {
+    const formattedDate = formatDeadlineDate(opp.deadline);
+    if (opp.days_left !== null && opp.days_left !== undefined) {
+      if (opp.days_left < 0) {
+        deadlineBadge = `<span class="tag-urgent" style="background:#FEE2E2; color:#B91C1C; border-color:#FECACA;">${ICONS.calendar} Closed (${formattedDate})</span>`;
+      } else if (opp.days_left <= 3) {
+        deadlineBadge = `<span class="tag-urgent">${ICONS.calendar} ${opp.days_left}d left • ${formattedDate} (GMT)</span>`;
+      } else if (opp.days_left <= 7) {
+        deadlineBadge = `<span class="tag-urgent" style="background:#FDF7ED; color:#C88A32; border-color:#F7E8CE;">${ICONS.calendar} ${opp.days_left}d left • ${formattedDate} (GMT)</span>`;
+      } else {
+        deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} ${formattedDate} (GMT) • ${opp.days_left}d left</span>`;
+      }
     } else {
-      deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} ${opp.days_left}d left</span>`;
+      deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} ${formattedDate} (GMT)</span>`;
     }
+  } else {
+    deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} Rolling / Open Enrollment</span>`;
   }
 
   const isSaved = opp.status === 'saved' || opp.status === 'in_progress' || opp.status === 'applied';
@@ -301,7 +327,7 @@ function updatePipeline(items) {
         </div>
       </div>
       <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; margin-top: 4px;">
-        ${ICONS.calendar} ${item.deadline ? 'Due: ' + item.deadline : 'Open enrollment'}
+        ${ICONS.calendar} ${item.deadline ? formatDeadlineDate(item.deadline) + ' (GMT)' + (item.days_left !== null ? ' • ' + item.days_left + 'd left' : '') : 'Rolling / Open Enrollment'}
       </div>
     </div>
   `).join('');
@@ -416,7 +442,7 @@ async function openAssistant(id) {
           </div>
           <div class="checklist-item">
             <span style="color: var(--text-muted);">${ICONS.calendar}</span>
-            <span><strong>Deadline:</strong> ${data.deadline ? data.deadline + ' (' + (data.days_left !== null ? data.days_left + 'd left' : '') + ')' : 'Open enrollment'}</span>
+            <span><strong>Deadline:</strong> ${data.deadline ? formatDeadlineDate(data.deadline) + ' (GMT 0:00) — ' + (data.days_left !== null ? (data.days_left < 0 ? 'Closed' : data.days_left + ' days left') : '') : 'Rolling / Open Enrollment'}</span>
           </div>
         </div>
       </div>

@@ -328,15 +328,23 @@ def opportunities(limit: int) -> None:
             console.print("📭 No opportunities found. Run [bold]todaytech scan[/bold] first.")
             return
 
-        table = Table(title="🎯 TodayTech Matched Opportunities")
+        from datetime import datetime, timezone
+
+        today = datetime.now(timezone.utc).date()
+
+        table = Table(title="🎯 TodayTech Matched Opportunities (GMT 0:00)")
         table.add_column("ID", style="cyan", no_wrap=True)
         table.add_column("Score", style="bold green", justify="right")
         table.add_column("Type", style="magenta")
         table.add_column("Title", style="white")
-        table.add_column("Deadline", style="yellow")
+        table.add_column("Deadline (GMT 0:00)", style="yellow")
 
         for opp in opps:
-            deadline_str = str(opp.deadline) if opp.deadline else "Rolling/TBA"
+            if opp.deadline:
+                days_left = (opp.deadline - today).days
+                deadline_str = f"{opp.deadline} ({days_left}d)"
+            else:
+                deadline_str = "Rolling/Open"
             table.add_row(
                 opp.external_id[:8],
                 f"{opp.fit_score}/100",

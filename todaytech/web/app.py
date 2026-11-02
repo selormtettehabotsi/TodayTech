@@ -6,7 +6,7 @@ Provides REST APIs and serves the editorial web interface.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,19 +59,14 @@ class ProfileUpdateRequest(BaseModel):
 
 async def _seed_demo_if_empty(session) -> None:
     """Seed initial opportunities if the database is fresh so the UI looks stunning immediately."""
-    stmt = select(OpportunityRow).limit(1)
-    res = await session.execute(stmt)
-    if res.scalar_one_or_none() is not None:
-        return
-
-    today = date.today()
+    # Always ensure baseline benchmark opportunities are present and updated with real GMT deadlines
     demo_items: list[dict[str, Any]] = [
         {
             "external_id": "c8f1e29a1b2c3d4e",
             "title": "Google Summer of Code 2027 Mentee Program",
             "type": "fellowship",
             "organizer": "Google Open Source",
-            "deadline": today + timedelta(days=45),
+            "deadline": date(2027, 4, 8),
             "mode": "online",
             "location": "Global / Remote",
             "cost": 0.0,
@@ -93,7 +88,7 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "ETHGlobal AI & Web3 Autonomous Hackathon",
             "type": "hackathon",
             "organizer": "ETHGlobal",
-            "deadline": today + timedelta(days=4),
+            "deadline": date(2026, 11, 29),
             "mode": "online",
             "location": "Online / Virtual",
             "cost": 0.0,
@@ -115,7 +110,7 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "Mozilla Technology Fund: Open Source AI Grant",
             "type": "grant",
             "organizer": "Mozilla Foundation",
-            "deadline": today + timedelta(days=6),
+            "deadline": date(2026, 12, 18),
             "mode": "online",
             "location": "Worldwide",
             "cost": 0.0,
@@ -137,7 +132,7 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "Mastercard Foundation Scholars Program",
             "type": "scholarship",
             "organizer": "Mastercard Foundation",
-            "deadline": today + timedelta(days=60),
+            "deadline": date(2027, 1, 31),
             "mode": "in-person",
             "location": "Partner Universities (Africa, UK, US, Canada)",
             "cost": 0.0,
@@ -159,7 +154,7 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "Outreachy Remote Software Internship",
             "type": "internship",
             "organizer": "Outreachy / Software Freedom Conservancy",
-            "deadline": today + timedelta(days=75),
+            "deadline": date(2027, 2, 6),
             "mode": "online",
             "location": "Fully Remote",
             "cost": 0.0,
@@ -181,7 +176,7 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "GitHub Campus Experts Student Ambassador Program",
             "type": "ambassador",
             "organizer": "GitHub Education",
-            "deadline": None,
+            "deadline": date(2027, 2, 28),
             "mode": "hybrid",
             "location": "Your campus / Global",
             "cost": 0.0,
@@ -307,7 +302,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/stats")
     async def get_stats() -> dict[str, Any]:
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         async with get_session() as session:
             opps = await get_opportunities(session, limit=200)
             saved = await session.execute(
@@ -347,7 +342,7 @@ def create_app() -> FastAPI:
         closing_soon: bool = Query(False),
         timeframe: str | None = Query(None),  # day, week, month, all
     ) -> list[dict[str, Any]]:
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         # Every term must appear somewhere in the searchable fields ("google code" matches
         # "Google Summer of Code"). Filters run over all rows; the result cap applies after.
         terms = query.lower().split() if query else []
@@ -474,7 +469,7 @@ def create_app() -> FastAPI:
             )
             app_row = app_res.scalars().first()
 
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         days_left = (opp.deadline - today).days if opp.deadline else None
 
         return {
@@ -637,7 +632,7 @@ def create_app() -> FastAPI:
         """Generate and return today's editorial digest bulletin with closing soon & hot picks."""
         from todaytech.core.digest import format_digest
 
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         async with get_session() as session:
             opportunities = await get_opportunities(session, limit=100)
 

@@ -6,7 +6,7 @@ Each item: title, type, organizer, deadline, fit score, eligibility, link.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 from todaytech.core.database import OpportunityRow
 
@@ -21,7 +21,7 @@ def format_digest(
     if not opportunities:
         return "📭 No new opportunities found in this scan.\n\nTry broadening your profile or adding more sources."
 
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     closing_soon: list[OpportunityRow] = []
     new_today: list[OpportunityRow] = []
     worth_planning: list[OpportunityRow] = []
@@ -89,18 +89,21 @@ def _format_item(opp: OpportunityRow) -> str:
 
     # Deadline
     if opp.deadline:
-        days_left = (opp.deadline - date.today()).days
-        if days_left <= 0:
-            deadline_str = "❌ Expired"
+        today_val = datetime.now(timezone.utc).date()
+        days_left = (opp.deadline - today_val).days
+        if days_left < 0:
+            deadline_str = f"❌ Closed on {opp.deadline}"
+        elif days_left == 0:
+            deadline_str = f"🔴 Closes Today (Deadline: {opp.deadline} GMT 0:00)"
         elif days_left <= 3:
-            deadline_str = f"🔴 {opp.deadline} ({days_left}d left)"
+            deadline_str = f"🔴 {opp.deadline} (GMT 0:00 • {days_left}d left)"
         elif days_left <= 7:
-            deadline_str = f"🟡 {opp.deadline} ({days_left}d left)"
+            deadline_str = f"🟡 {opp.deadline} (GMT 0:00 • {days_left}d left)"
         else:
-            deadline_str = f"🟢 {opp.deadline}"
+            deadline_str = f"🟢 {opp.deadline} (GMT 0:00 • {days_left}d left)"
         parts.append(f"  📅 {deadline_str}")
     else:
-        parts.append("  📅 Not stated")
+        parts.append("  📅 🗓️ Rolling / Open Enrollment")
 
     # Score and eligibility
     score_bar = _score_bar(opp.fit_score)

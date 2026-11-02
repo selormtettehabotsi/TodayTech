@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime, timedelta
+import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -427,20 +428,98 @@ async def run_scan(
 # ---------------------------------------------------------------------------
 
 
-def _parse_date(val: Any) -> date | None:
-    """Try to parse a date from various formats."""
-    if val is None:
+def _parse_date(val: Any, default_year: int = 2026) -> date | None:
+    """Robustly parse dates from strings, ISO timestamps with offsets, and ranges into GMT 0:00 (UTC) dates."""
+    if val is None or val == "":
         return None
-    if isinstance(val, date):
+    if isinstance(val, date) and not isinstance(val, datetime):
         return val
     if isinstance(val, datetime):
+        if val.tzinfo:
+            val = val.astimezone(timezone.utc)
         return val.date()
-    if isinstance(val, str):
-        for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%B %d, %Y", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(val.strip(), fmt).date()
-            except ValueError:
-                continue
+
+    if not isinstance(val, str):
+        return None
+
+    val = val.strip()
+    if not val or val.lower() in (
+        "null",
+        "none",
+        "tbd",
+        "tba",
+        "open",
+        "rolling",
+        "ongoing",
+        "open enrollment",
+    ):
+        return None
+
+    # 1. Try ISO 8601 (handles timezone offsets like +00:00, +05:30, Z)
+    try:
+        clean_iso = val.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_iso)
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc)
+        return dt.date()
+    except (ValueError, TypeError):
+        pass
+
+    # 2. Date ranges like 'Nov 09 - 30, 2026' or 'Dec 19, 2026 - Jan 18, 2027' -> extract closing deadline
+    if " - " in val or " to " in val or "–" in val:
+        sep = " - " if " - " in val else (" to " if " to " in val else "–")
+        parts = [p.strip() for p in val.split(sep)]
+        end_part = parts[-1]
+
+        year_match = re.search(r"\b(202\d)\b", val)
+        year_str = year_match.group(1) if year_match else str(default_year)
+
+        # If end_part is only day number e.g. '30, 2026' or '10'
+        m_day = re.match(r"^(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?$", end_part)
+        if m_day:
+            day = m_day.group(1)
+            yr = m_day.group(2) or year_str
+            m_month = re.search(r"\b([A-Za-z]{3,9})\b", parts[0])
+            if m_month:
+                month_name = m_month.group(1)
+                end_part = f"{month_name} {day}, {yr}"
+        elif not re.search(r"\b(202\d)\b", end_part):
+            end_part = f"{end_part}, {year_str}"
+
+        val_to_try = end_part
+    else:
+        val_to_try = val
+
+    # Clean ordinals like 1st, 2nd, 3rd, 4th
+    clean_val = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", val_to_try)
+    clean_val = re.sub(r"\s+", " ", clean_val).strip()
+
+    formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%B %d %Y",
+        "%b %d %Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%b %d",
+        "%B %d",
+    ]
+
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(clean_val, fmt)
+            if "%Y" not in fmt:
+                parsed = parsed.replace(year=default_year)
+            return parsed.date()
+        except ValueError:
+            continue
+
     return None
 
 
@@ -456,12 +535,24 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
     if opp_type == OpportunityType.OTHER and "ambassador" in str(data.get("title", "")).lower():
         opp_type = OpportunityType.AMBASSADOR
 
+    deadline_val = _parse_date(data.get("deadline"))
+    raw_start = data.get("start_date")
+    start_val = _parse_date(raw_start)
+    if (
+        not start_val
+        and isinstance(data.get("deadline"), str)
+        and (" - " in data["deadline"] or " to " in data["deadline"])
+    ):
+        sep = " - " if " - " in data["deadline"] else " to "
+        parts = data["deadline"].split(sep)
+        start_val = _parse_date(parts[0])
+
     return Opportunity(
         title=data.get("title", "Unknown"),
         type=opp_type,
         organizer=data.get("organizer", ""),
-        deadline=_parse_date(data.get("deadline")),
-        start_date=_parse_date(data.get("start_date")),
+        deadline=deadline_val,
+        start_date=start_val,
         location=data.get("location", ""),
         mode=data.get("mode", ""),
         cost=float(data.get("cost", 0) or 0),

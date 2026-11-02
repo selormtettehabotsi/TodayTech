@@ -6,7 +6,7 @@ The bot ONLY responds to the Telegram user ID set in TELEGRAM_USER_ID.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import datetime, timezone
 
 import structlog
 from telegram import Update
@@ -302,7 +302,7 @@ async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     async with get_session() as session:
         stmt = (
             select(OpportunityRow)
-            .where(OpportunityRow.deadline >= date.today())
+            .where(OpportunityRow.deadline >= datetime.now(timezone.utc).date())
             .order_by(OpportunityRow.deadline.asc())
             .limit(20)
         )
@@ -315,7 +315,7 @@ async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     lines = ["📅 **Upcoming Deadlines**\n"]
     for opp in opps:
-        days_left = (opp.deadline - date.today()).days if opp.deadline else "?"
+        days_left = (opp.deadline - datetime.now(timezone.utc).date()).days if opp.deadline else "?"
         lines.append(f"• **{opp.title}** — {opp.deadline} ({days_left}d) `{opp.external_id[:8]}`")
     await _send_long(update, "\n".join(lines))
 
