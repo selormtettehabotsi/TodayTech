@@ -275,7 +275,7 @@ def create_app() -> FastAPI:
                 await bot_app.initialize()
                 await bot_app.start()
                 if bot_app.updater is not None:
-                    await bot_app.updater.start_polling(drop_pending_updates=True)
+                    await bot_app.updater.start_polling(drop_pending_updates=False)
                 log.info("web.telegram_bot_active")
             except Exception as exc:
                 log.warning("web.telegram_bot_start_failed", error=str(exc))
@@ -461,14 +461,22 @@ def create_app() -> FastAPI:
 
             user_state_res = await session.execute(
                 select(UserStateRow)
-                .where(UserStateRow.opportunity_id == opp.external_id)
+                .where(
+                    (UserStateRow.opportunity_id == opp.external_id)
+                    | (UserStateRow.opportunity_id == opp.external_id[:8])
+                    | (UserStateRow.opportunity_id == opp.external_id[:16])
+                )
                 .order_by(UserStateRow.id.desc())
             )
             user_state = user_state_res.scalars().first()
 
             app_res = await session.execute(
                 select(ApplicationRow)
-                .where(ApplicationRow.opportunity_id == opp.external_id)
+                .where(
+                    (ApplicationRow.opportunity_id == opp.external_id)
+                    | (ApplicationRow.opportunity_id == opp.external_id[:8])
+                    | (ApplicationRow.opportunity_id == opp.external_id[:16])
+                )
                 .order_by(ApplicationRow.id.desc())
             )
             app_row = app_res.scalars().first()

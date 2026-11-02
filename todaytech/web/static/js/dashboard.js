@@ -389,39 +389,40 @@ async function openAssistant(id) {
   content.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading opportunity details...</div>`;
 
   try {
-    const res = await fetch(`/api/opportunity/${id}`);
+    const res = await fetch(`/api/opportunity/${encodeURIComponent(id)}`);
     if (!res.ok) {
-      throw new Error(`Failed to load opportunity (${res.status})`);
+      throw new Error(`Server returned ${res.status} ${res.statusText}`);
     }
     const data = await res.json();
     activeOpportunity = data;
 
-    document.getElementById('drawerTitle').textContent = data.title;
+    document.getElementById('drawerTitle').textContent = data.title || 'Opportunity Details';
 
     const isSaved = (data.status === 'saved' || data.status === 'in_progress' || data.status === 'applied');
     const statusText = data.status === 'in_progress' ? 'Application in Progress' : (data.status === 'applied' ? 'Applied' : (data.status === 'saved' ? 'Saved in Pipeline' : 'On Radar'));
     const toggleBtnText = isSaved ? `${ICONS.cross} Remove from Pipeline (Unsave)` : `${ICONS.bookmarkOutline} Save to Pipeline`;
+    const typeLower = (data.type || 'opportunity').toLowerCase();
 
     content.innerHTML = `
       <!-- Drawer Status Action Bar -->
       <div class="drawer-status-bar">
         <div class="drawer-status-info">
           <span style="font-weight: 500; color: var(--text-muted);">Status:</span>
-          <span class="status-badge status-${data.status}">${statusText}</span>
+          <span class="status-badge status-${data.status || 'radar'}">${statusText}</span>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="toggleSaveFromDrawer('${data.id}', '${data.status}')">
+        <button class="btn btn-secondary btn-sm" onclick="toggleSaveFromDrawer('${data.id}', '${data.status || 'radar'}')">
           ${toggleBtnText}
         </button>
       </div>
 
       <div class="studio-section">
         <div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
-          <span class="type-tag type-${data.type.toLowerCase()}">${data.type}</span>
-          <span class="badge-score">${ICONS.check} ${data.fit_score}% Match</span>
-          <span class="tag-comfortable">Organized by ${escapeHtml(data.organizer)}</span>
+          <span class="type-tag type-${typeLower}">${escapeHtml(data.type || 'Opportunity')}</span>
+          <span class="badge-score">${ICONS.check} ${data.fit_score ?? 80}% Match</span>
+          <span class="tag-comfortable">Organized by ${escapeHtml(data.organizer || 'Independent')}</span>
         </div>
         <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 16px;">
-          ${escapeHtml(data.fit_reason)}
+          ${escapeHtml(data.fit_reason || 'Matched based on your skills and preferences.')}
         </p>
       </div>
 
@@ -430,19 +431,19 @@ async function openAssistant(id) {
         <div class="checklist-box">
           <div class="checklist-item">
             <span style="color: var(--accent-sage-text);">${ICONS.check}</span>
-            <span><strong>Verdict:</strong> ${data.eligibility_verdict} — ${escapeHtml(data.eligibility_reason)}</span>
+            <span><strong>Verdict:</strong> ${escapeHtml(data.eligibility_verdict || 'Eligible')} — ${escapeHtml(data.eligibility_reason || 'Meets criteria')}</span>
           </div>
           <div class="checklist-item">
             <span style="color: var(--text-muted);">${ICONS.mapPin}</span>
-            <span><strong>Mode & Location:</strong> ${escapeHtml(data.mode)} (${escapeHtml(data.location)})</span>
+            <span><strong>Mode & Location:</strong> ${escapeHtml(data.mode || 'Online')} (${escapeHtml(data.location || 'Global')})</span>
           </div>
           <div class="checklist-item">
             <span style="color: var(--text-muted);">${ICONS.award}</span>
-            <span><strong>Fee:</strong> ${data.cost > 0 ? '$' + data.cost : 'No application fee'}</span>
+            <span><strong>Fee:</strong> ${data.cost && data.cost > 0 ? '$' + data.cost : 'No application fee'}</span>
           </div>
           <div class="checklist-item">
             <span style="color: var(--text-muted);">${ICONS.calendar}</span>
-            <span><strong>Deadline:</strong> ${data.deadline ? formatDeadlineDate(data.deadline) + ' (GMT 0:00) — ' + (data.days_left !== null ? (data.days_left < 0 ? 'Closed' : data.days_left + ' days left') : '') : 'Rolling / Open Enrollment'}</span>
+            <span><strong>Deadline:</strong> ${data.deadline ? formatDeadlineDate(data.deadline) + ' (GMT 0:00) — ' + (data.days_left !== null && data.days_left !== undefined ? (data.days_left < 0 ? 'Closed' : data.days_left + ' days left') : '') : 'Rolling / Open Enrollment'}</span>
           </div>
         </div>
       </div>
@@ -466,7 +467,16 @@ async function openAssistant(id) {
     fetchDrafts(data.id);
   } catch (err) {
     console.error('Failed to open assistant', err);
-    content.innerHTML = `<p style="color: var(--accent-terracotta-text); padding: 24px;">Failed to load opportunity details.</p>`;
+    content.innerHTML = `
+      <div style="padding: 24px;">
+        <p style="color: var(--accent-terracotta-text); font-weight: 500; margin-bottom: 8px;">
+          Failed to load opportunity details (${escapeHtml(err.message || 'Error')}).
+        </p>
+        <p style="color: var(--text-muted); font-size: 13px;">
+          Please ensure your TodayTech container is rebuilt with latest updates and refresh your browser.
+        </p>
+      </div>
+    `;
   }
 }
 

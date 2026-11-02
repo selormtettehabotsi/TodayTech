@@ -251,7 +251,11 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     opp_id = match.group(1)
     async with get_session() as session:
-        await set_user_state(session, opp_id, "saved")
+        from todaytech.core.database import get_opportunity_by_id
+
+        opp = await get_opportunity_by_id(session, opp_id)
+        full_id = opp.external_id if opp else opp_id
+        await set_user_state(session, full_id, "saved")
         await session.commit()
 
     await update.message.reply_text(f"✅ Saved `{opp_id}`", parse_mode="Markdown")
@@ -268,7 +272,11 @@ async def cmd_ignore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     opp_id = match.group(1)
     async with get_session() as session:
-        await set_user_state(session, opp_id, "ignored")
+        from todaytech.core.database import get_opportunity_by_id
+
+        opp = await get_opportunity_by_id(session, opp_id)
+        full_id = opp.external_id if opp else opp_id
+        await set_user_state(session, full_id, "ignored")
         await session.commit()
 
     await update.message.reply_text(f"🙈 Ignored `{opp_id}`", parse_mode="Markdown")
@@ -331,15 +339,39 @@ async def cmd_apply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     opp_id = match.group(1)
     await update.message.reply_text(
-        f"📝 Starting application assistant for `{opp_id}`...", parse_mode="Markdown"
+        f"📝 Starting application assistant for `{opp_id}`...\n"
+        "Drafting personalized motivation letter, checklist, and Word document...",
+        parse_mode="Markdown",
     )
 
     try:
+        from pathlib import Path
+
         from todaytech.apply.assistant import run_application_assistant
 
         settings: Settings = context.bot_data["settings"]
         result = await run_application_assistant(opp_id, settings)
         await _send_long(update, result)
+
+        base_drafts = Path("data/drafts")
+        if base_drafts.exists() and update.message:
+            target_dir = base_drafts / opp_id[:16]
+            if not target_dir.exists():
+                for cand in base_drafts.glob(f"{opp_id[:8]}*"):
+                    if cand.is_dir():
+                        target_dir = cand
+                        break
+            if target_dir.exists() and target_dir.is_dir():
+                for docx_file in sorted(target_dir.glob("*.docx")):
+                    try:
+                        with open(docx_file, "rb") as doc_fp:
+                            await update.message.reply_document(
+                                document=doc_fp,
+                                filename=docx_file.name,
+                                caption=f"📄 {docx_file.stem.replace('_', ' ').title()}",
+                            )
+                    except Exception as doc_err:
+                        log.warning("bot.send_doc_failed", error=str(doc_err), filename=docx_file.name)
     except Exception as exc:
         log.error("bot.apply_failed", error=str(exc))
         await update.message.reply_text(f"❌ Application assistant failed: {exc}")
@@ -480,7 +512,7 @@ async def start_bot(settings: Settings) -> None:
     log.info("bot.starting")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling(drop_pending_updates=False)
 
     # Keep running
     import asyncio
