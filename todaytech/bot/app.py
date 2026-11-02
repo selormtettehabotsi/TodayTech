@@ -106,18 +106,20 @@ async def _send_long(update: Update, text: str) -> None:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start — welcome message."""
     await update.message.reply_text(
-        "🚀 **Welcome to TodayTech!**\n\n"
-        "I find hackathons, scholarships, internships, fellowships, and more "
-        "that match your profile.\n\n"
-        "**Quick start:**\n"
-        "• `update me` — run a fresh scan and get today's digest\n"
-        "• `only hackathons` — filter by type\n"
-        "• `details <id>` — full breakdown of an opportunity\n"
-        "• `apply <id>` — start the application assistant\n"
-        "• `save <id>` / `saved` — manage your pipeline\n"
-        "• `deadlines` — upcoming deadlines\n"
-        "• `/setup` — re-run onboarding\n\n"
-        "Make sure your `profile.yaml` is set up!",
+        "🚀 *Welcome to TodayTech!*\n\n"
+        "I find active hackathons, scholarships, internships, fellowships, and student ambassador "
+        "programs tailored specifically to your profile (all dates in GMT 0:00).\n\n"
+        "⚡ *Commands you can tap:* \n"
+        "• /update — run a live scan and get today's top opportunities\n"
+        "• /saved — view your saved application pipeline\n"
+        "• /deadlines — see upcoming closing deadlines\n"
+        "• `/details <id>` — full eligibility breakdown & links\n"
+        "• `/apply <id>` — prepare tailored CV, SOP & answers\n"
+        "• `/help` — view this help menu\n\n"
+        "💬 *Or just send me messages:* \n"
+        "• `only hackathons` or `only scholarships`\n"
+        "• `save <id>` to bookmark an opportunity\n"
+        "• `ignore <id>` to hide from your feed",
         parse_mode="Markdown",
     )
 
@@ -499,9 +501,9 @@ async def start_bot(settings: Settings) -> None:
     app.bot_data["settings"] = settings
 
     # Register handlers
-    app.add_handler(CommandHandler(["start", "help"], cmd_start))
+    app.add_handler(CommandHandler(["start", "help", "menu"], cmd_start))
     app.add_handler(CommandHandler("setup", cmd_setup))
-    app.add_handler(CommandHandler(["update", "scan", "digest"], cmd_update))
+    app.add_handler(CommandHandler(["update", "scan", "digest", "refresh"], cmd_update))
     app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
     app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
     app.add_handler(CommandHandler("apply", cmd_apply))

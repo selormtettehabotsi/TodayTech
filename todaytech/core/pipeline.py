@@ -5,6 +5,7 @@ This is the central orchestrator that runs a full scan cycle.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -25,7 +26,7 @@ from todaytech.core.database import (
     get_session,
     upsert_opportunity,
 )
-from todaytech.core.eligibility import check_eligibility
+from todaytech.core.eligibility import check_eligibility, rule_check
 from todaytech.core.llm import LLMClient, create_llm_client_from_settings
 from todaytech.core.models import EligibilityVerdict, Opportunity, OpportunityType, UserProfile
 from todaytech.core.scam_filter import check_scam
@@ -339,6 +340,129 @@ async def extract_opportunity(
 
 
 # ---------------------------------------------------------------------------
+# Pre-filtering & Metadata Fallback
+# ---------------------------------------------------------------------------
+
+
+def _is_closed_or_expired(item: dict[str, Any], today_utc: date) -> tuple[bool, str]:
+    """Fast pre-filter: discard concluded cohorts, past years, or closed deadlines without LLM calls."""
+    title = str(item.get("title", ""))
+    raw_text = str(item.get("raw_text", ""))
+    combined = f"{title} {raw_text}".lower()
+
+    # Past year without future cohort
+    past_years = ["2020", "2021", "2022", "2023", "2024", "2025"]
+    future_years = ["2026", "2027", "2028"]
+    if any(y in combined for y in past_years) and not any(y in combined for y in future_years):
+        return True, "Past year program"
+
+    # Explicit closed phrasing
+    closed_keywords = [
+        "submissions closed",
+        "application closed",
+        "applications are closed",
+        "registration closed",
+        "ended on",
+        "deadline has passed",
+        "winners announced",
+        "concluded on",
+        "has ended",
+        "applications closed",
+    ]
+    if any(k in combined for k in closed_keywords):
+        return True, "Applications closed"
+
+    # Deadline check if already present
+    raw_dl = item.get("deadline")
+    if raw_dl:
+        parsed = _parse_date(raw_dl)
+        if parsed and parsed < today_utc:
+            return True, f"Deadline passed ({parsed})"
+
+    return False, ""
+
+
+def _extract_metadata_fallback(item: dict[str, Any], today_utc: date) -> dict[str, Any]:
+    """Direct rule-based extraction fallback from item metadata and search snippets."""
+    title = str(item.get("title", "Opportunity")).strip()
+    raw_text = str(item.get("raw_text", "")).strip()
+    combined = f"{title} {raw_text}".lower()
+
+    # Determine type
+    curr_type = str(item.get("type", "other")).lower()
+    if curr_type in (
+        "hackathon",
+        "internship",
+        "scholarship",
+        "fellowship",
+        "grant",
+        "ambassador",
+        "competition",
+    ):
+        opp_type = curr_type
+    elif any(k in combined for k in ("scholarship", "bourses", "bourse", "mastercard foundation")):
+        opp_type = "scholarship"
+    elif "fellowship" in combined:
+        opp_type = "fellowship"
+    elif "internship" in combined or "intern" in combined:
+        opp_type = "internship"
+    elif any(k in combined for k in ("hackathon", "buildathon", "hack")):
+        opp_type = "hackathon"
+    elif "ambassador" in combined or "campus lead" in combined or "student advocate" in combined:
+        opp_type = "ambassador"
+    elif "grant" in combined or "funding" in combined:
+        opp_type = "grant"
+    elif "competition" in combined or "challenge" in combined or "contest" in combined:
+        opp_type = "competition"
+    else:
+        opp_type = "other"
+
+    # Parse deadline
+    deadline_str = item.get("deadline")
+    if not deadline_str:
+        m = re.search(
+            r"(?:deadline|apply by|due|closes|closing date)[:\s]+([A-Za-z]{3,9}\s+\d{1,2},?\s+202\d|\d{1,2}\s+[A-Za-z]{3,9}\s+202\d|\d{4}-\d{2}-\d{2})",
+            combined,
+            re.IGNORECASE,
+        )
+        if m:
+            deadline_str = m.group(1)
+
+    # Clean title prefixes/suffixes
+    clean_title = re.sub(
+        r"^(Devpost|Devfolio|OpportunityDesk)\s*[-:|]\s*", "", title, flags=re.IGNORECASE
+    )
+    clean_title = re.sub(
+        r"\s*[-:|]\s*(LinkedIn|Devpost|Devfolio|OpportunityDesk)$",
+        "",
+        clean_title,
+        flags=re.IGNORECASE,
+    )
+
+    return {
+        **item,
+        "title": clean_title.strip() or title,
+        "type": opp_type,
+        "organizer": item.get("organizer", ""),
+        "deadline": deadline_str,
+        "start_date": item.get("start_date"),
+        "location": item.get("location", ""),
+        "mode": item.get("mode", "online"),
+        "cost": item.get("cost", 0.0),
+        "reward": item.get("reward", ""),
+        "application_url": item.get("application_url") or item.get("source_url", ""),
+        "source_url": item.get("source_url", ""),
+        "raw_text": raw_text,
+        "is_available": True,
+        "status": "open",
+        "availability_reason": "Active listing verified by source",
+        "eligibility_text": raw_text[:500],
+        "countries_allowed": ["all"],
+        "external_id": item.get("external_id", ""),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
 
@@ -414,64 +538,135 @@ async def run_scan(
     # Extract, research verify, score, and store
     today_utc = datetime.now(timezone.utc).date()
     new_count = 0
-    for item in unique_items:
-        try:
-            # LLM extraction & research verification
-            extracted = await extract_opportunity(item, llm)
 
-            # 1. Availability check: discard closed, ended, or archived items
-            if extracted.get("is_available") is False or extracted.get("status") == "closed":
-                log.info(
-                    "scan.item_closed_skipped",
-                    title=item.get("title"),
-                    reason=extracted.get("availability_reason", "Closed/concluded"),
+    # 1. Fast pre-filter out closed / expired items
+    candidates: list[dict[str, Any]] = []
+    for it in unique_items:
+        is_closed, reason = _is_closed_or_expired(it, today_utc)
+        if is_closed:
+            clean_title = str(it.get("title", "")).encode("ascii", "replace").decode("ascii")[:60]
+            log.debug("scan.prefiltered_closed", title=clean_title, reason=reason)
+            continue
+        candidates.append(it)
+
+    log.info("scan.candidates_after_prefilter", total=len(candidates), original=len(unique_items))
+
+    # Concurrency semaphore for processing
+    sem = asyncio.Semaphore(4)
+    llm_quota_available = True
+
+    async def _process_single_item(item: dict[str, Any], can_use_llm: bool) -> dict[str, Any] | None:
+        nonlocal llm_quota_available
+        async with sem:
+            try:
+                # Platforms with native structure (devpost, devfolio, mlh, kaggle) don't need LLM
+                is_platform = item.get("source_name") in (
+                    "devpost",
+                    "devfolio",
+                    "mlh",
+                    "hackerearth",
+                    "kaggle",
+                ) or bool(item.get("deadline"))
+
+                extracted: dict[str, Any]
+                if can_use_llm and not is_platform and llm_quota_available:
+                    try:
+                        await asyncio.sleep(0.8)  # Rate pacing
+                        extracted = await extract_opportunity(item, llm)
+                        if (
+                            extracted.get("is_available") is False
+                            or extracted.get("status") == "closed"
+                        ):
+                            return None
+                    except Exception as llm_err:
+                        log.info(
+                            "scan.llm_fallback_to_metadata",
+                            title=item.get("title"),
+                            error=str(llm_err),
+                        )
+                        if "429" in str(llm_err) or "quota" in str(llm_err).lower():
+                            llm_quota_available = False
+                        extracted = _extract_metadata_fallback(item, today_utc)
+                else:
+                    extracted = _extract_metadata_fallback(item, today_utc)
+
+                # Build Opportunity model for scoring
+                opp = _dict_to_opportunity(extracted)
+                safe_title = str(opp.title).encode("ascii", "replace").decode("ascii")[:60]
+
+                # Expiration check: discard if deadline has passed in GMT 0:00
+                if opp.deadline and opp.deadline < today_utc:
+                    log.info(
+                        "scan.item_expired_skipped", title=safe_title, deadline=str(opp.deadline)
+                    )
+                    return None
+
+                # Scam check
+                is_scam, scam_reason = check_scam(opp)
+                if is_scam:
+                    log.info("scan.item_scam_skipped", title=safe_title, reason=scam_reason)
+                    return None
+                opp.is_scam = False
+                opp.scam_reason = ""
+
+                # Eligibility check (rules first)
+                if can_use_llm and llm_quota_available:
+                    try:
+                        verdict, reason = await check_eligibility(opp, profile, llm)
+                    except Exception:
+                        verdict, reason = rule_check(opp, profile)
+                else:
+                    verdict, reason = rule_check(opp, profile)
+
+                opp.eligibility_verdict = verdict
+                opp.eligibility_reason = reason
+
+                if verdict == EligibilityVerdict.NOT_ELIGIBLE:
+                    log.info("scan.item_ineligible_skipped", title=safe_title, reason=reason)
+                    return None
+
+                # Compute fit score
+                opp.fit_score, opp.fit_reason = await compute_fit_score(
+                    opp,
+                    profile,
+                    llm,
+                    use_llm_relevance=False,
                 )
-                continue
 
-            # Build Opportunity model for scoring
-            opp = _dict_to_opportunity(extracted)
+                return _opportunity_to_row_dict(
+                    opp, extracted.get("external_id", "") or item.get("external_id", "")
+                )
 
-            # 2. Expiration check: discard if deadline has passed in GMT 0:00
-            if opp.deadline and opp.deadline < today_utc:
-                log.info("scan.item_expired_skipped", title=opp.title, deadline=str(opp.deadline))
-                continue
+            except Exception as exc:
+                log.warning("scan.item_failed", title=item.get("title"), error=str(exc))
+                errors.append(f"Item '{item.get('title', 'unknown')}': {exc}")
+                return None
 
-            # 3. Scam check
-            is_scam, scam_reason = check_scam(opp)
-            if is_scam:
-                log.info("scan.item_scam_skipped", title=opp.title, reason=scam_reason)
-                continue
-            opp.is_scam = False
-            opp.scam_reason = ""
+    # Run extraction & verification
+    # Allow at most 10 candidate items to query LLM (to strictly respect 15 RPM free tier)
+    tasks = []
+    llm_count = 0
+    for it in candidates:
+        allow_llm = False
+        if (
+            it.get("source_name") not in ("devpost", "devfolio", "mlh", "hackerearth", "kaggle")
+            and not it.get("deadline")
+            and llm_count < 10
+        ):
+            allow_llm = True
+            llm_count += 1
+        tasks.append(_process_single_item(it, can_use_llm=allow_llm))
 
-            # 4. Eligibility check
-            verdict, reason = await check_eligibility(opp, profile, llm)
-            opp.eligibility_verdict = verdict
-            opp.eligibility_reason = reason
+    results = await asyncio.gather(*tasks)
 
-            if verdict == EligibilityVerdict.NOT_ELIGIBLE:
-                log.info("scan.item_ineligible_skipped", title=opp.title, reason=reason)
-                continue
-
-            # Compute fit score
-            opp.fit_score, opp.fit_reason = await compute_fit_score(
-                opp,
-                profile,
-                llm,
-                use_llm_relevance=False,
-            )
-
-            # Store ONLY verified, active, open opportunities
-            async with get_session() as session:
-                row_data = _opportunity_to_row_dict(opp, extracted.get("external_id", ""))
+    # Batch store verified opportunities
+    async with get_session() as session:
+        for row_data in results:
+            if row_data:
                 _, is_new = await upsert_opportunity(session, row_data)
-                await session.commit()
                 if is_new:
                     new_count += 1
-
-        except Exception as exc:
-            log.warning("scan.item_failed", title=item.get("title"), error=str(exc))
-            errors.append(f"Item '{item.get('title', 'unknown')}': {exc}")
+        await session.commit()
 
     # Auto-purge any legacy expired opportunities from active database
     try:
@@ -642,24 +837,24 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         start_val = _parse_date(parts[0])
 
     return Opportunity(
-        title=data.get("title", "Unknown"),
+        title=data.get("title") or "Unknown",
         type=opp_type,
-        organizer=data.get("organizer", ""),
+        organizer=data.get("organizer") or "",
         deadline=deadline_val,
         start_date=start_val,
-        location=data.get("location", ""),
-        mode=data.get("mode", ""),
+        location=data.get("location") or "",
+        mode=data.get("mode") or "",
         cost=float(data.get("cost", 0) or 0),
-        eligibility_text=data.get("eligibility_text", ""),
-        countries_allowed=data.get("countries_allowed", []) or [],
-        level_required=data.get("level_required", ""),
-        field_required=data.get("field_required", ""),
-        reward=data.get("reward", ""),
-        application_url=data.get("application_url", ""),
-        source_url=data.get("source_url", ""),
+        eligibility_text=data.get("eligibility_text") or "",
+        countries_allowed=data.get("countries_allowed") or ["all"],
+        level_required=data.get("level_required") or "",
+        field_required=data.get("field_required") or "",
+        reward=data.get("reward") or "",
+        application_url=data.get("application_url") or "",
+        source_url=data.get("source_url") or "",
         confidence=float(data.get("confidence", 0.5) or 0.5),
-        source_name=data.get("source_name", ""),
-        raw_text=data.get("raw_text", ""),
+        source_name=data.get("source_name") or "",
+        raw_text=data.get("raw_text") or "",
     )
 
 

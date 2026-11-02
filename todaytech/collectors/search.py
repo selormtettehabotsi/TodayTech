@@ -25,19 +25,30 @@ log = structlog.get_logger()
 class SearchCollector(Collector):
     """Base for search API collectors."""
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._exhausted: bool = False
+
     async def _search(self, query: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     async def collect(self, queries: list[str]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        # Focus on top 12 targeted queries per search engine to prevent free quota burnout and lengthy scans
-        selected = queries[:12] if len(queries) > 12 else queries
+        # Select top 6 high-priority queries per provider for balanced coverage and fast scans
+        selected = queries[:6] if len(queries) > 6 else queries
         for query in selected:
+            if getattr(self, "_exhausted", False):
+                break
             try:
                 items = await self._search(query)
                 results.extend(items)
             except Exception as exc:
                 log.warning("search.query_failed", collector=self.name, query=query, error=str(exc))
+                err_lower = str(exc).lower()
+                if any(w in err_lower for w in ("quota", "429", "401", "402", "exhausted", "credit")):
+                    log.info("search.provider_stopped_quota_limit", collector=self.name)
+                    self._exhausted = True
+                    break
         return results
 
 
@@ -64,8 +75,12 @@ class TavilyCollector(SearchCollector):
             "max_results": 10,
             "include_raw_content": False,
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code in (401, 402, 403, 429, 432):
+                log.info("tavily.quota_exhausted_or_invalid", status=resp.status_code)
+                self._exhausted = True
+                return []
             resp.raise_for_status()
             data = resp.json()
 
@@ -146,8 +161,12 @@ class GoogleSearchCollector(SearchCollector):
             "num": 10,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, params=params)
+            if resp.status_code in (401, 402, 403, 429, 432):
+                log.info("google.quota_exhausted_or_invalid", status=resp.status_code)
+                self._exhausted = True
+                return []
             resp.raise_for_status()
             data = resp.json()
 
@@ -188,6 +207,10 @@ class SerperCollector(SearchCollector):
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (401, 402, 403, 429, 432):
+                log.info("serper.quota_exhausted_or_invalid", status=resp.status_code)
+                self._exhausted = True
+                return []
             resp.raise_for_status()
             data = resp.json()
 
@@ -227,8 +250,12 @@ class SerpAPICollector(SearchCollector):
             "num": 10,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, params=params)
+            if resp.status_code in (401, 402, 403, 429, 432):
+                log.info("google.quota_exhausted_or_invalid", status=resp.status_code)
+                self._exhausted = True
+                return []
             resp.raise_for_status()
             data = resp.json()
 

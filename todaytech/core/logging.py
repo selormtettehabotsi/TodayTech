@@ -10,6 +10,17 @@ import structlog
 
 def setup_logging(level: str = "INFO") -> None:
     """Configure structlog with human-readable console output."""
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
