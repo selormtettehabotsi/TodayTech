@@ -12,7 +12,9 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+import httpx
 import structlog
+from bs4 import BeautifulSoup
 from thefuzz import fuzz
 
 from todaytech.collectors import get_all_collectors
@@ -217,43 +219,83 @@ def is_duplicate(
     return False
 
 
+async def _fetch_page_snippet(url: str) -> str:
+    """Perform live web research by fetching and cleaning the opportunity page content."""
+    if not url or not url.startswith(("http://", "https://")):
+        return ""
+    if any(d in url.lower() for d in ("linkedin.com", "t.me", "twitter.com", "x.com")):
+        return ""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        async with httpx.AsyncClient(timeout=8, headers=headers, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if (
+                resp.status_code == 200
+                and "text/html" in resp.headers.get("content-type", "").lower()
+            ):
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for s in soup(["script", "style", "nav", "footer", "header", "noscript", "aside"]):
+                    s.decompose()
+                text = " ".join(soup.stripped_strings)
+                return text[:2500]
+    except Exception:
+        pass
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # LLM extraction
 # ---------------------------------------------------------------------------
 
-_EXTRACT_PROMPT = """Extract structured opportunity data from this raw text.
+_EXTRACT_PROMPT = """Analyze this opportunity, extract its details, and strictly research its availability.
 
-RAW TEXT:
+TODAY'S DATE: {today_gmt} (Timezone: GMT 0:00)
+
+RAW TEXT & RESEARCH DATA:
 {raw_text}
 
 TITLE: {title}
 SOURCE URL: {source_url}
 
-Return JSON with these fields (use null for unknown):
+RESEARCH & AVAILABILITY RULES:
+1. STRICT AVAILABILITY RESEARCH:
+   - Determine whether applications are CURRENTLY OPEN and STILL AVAILABLE.
+   - If applications are closed, ended, concluded, or the deadline has passed before {today_gmt}, set "is_available": false and "status": "closed".
+   - If the listing refers to an old/past cohort (e.g. 2023, 2024, 2025) that has concluded, set "is_available": false and "status": "closed".
+   - If the program is open, rolling, or upcoming for 2026/2027, set "is_available": true and "status": "open".
+2. DEADLINE NORMALIZATION (GMT 0:00):
+   - Extract the exact closing/submission deadline in YYYY-MM-DD format.
+   - For date ranges (e.g., "Nov 9 - Nov 30, 2026"), the deadline is the closing end date ("2026-11-30").
+   - If the deadline is before {today_gmt}, set "is_available": false.
+   - If rolling or open enrollment without fixed closing date, use null.
+3. CLASSIFICATION & DETAILS:
+   - Categorize as: hackathon|internship|scholarship|fellowship|grant|program|competition|ambassador|other.
+   - Use type "ambassador" for campus/student ambassador, student community lead, or student developer advocate programs.
+
+Return valid JSON:
 {{
-  "title": "string",
+  "title": "Clean, descriptive opportunity title",
   "type": "hackathon|internship|scholarship|fellowship|grant|program|competition|ambassador|other",
-  "organizer": "string",
+  "organizer": "Organizing company, university, or foundation",
+  "is_available": true,
+  "status": "open|upcoming|closed",
+  "availability_reason": "Explanation of whether applications are actively open or ended",
   "deadline": "YYYY-MM-DD or null",
   "start_date": "YYYY-MM-DD or null",
   "location": "string",
   "mode": "online|in-person|hybrid",
   "cost": 0,
   "eligibility_text": "string",
-  "countries_allowed": ["list", "of", "countries"] or [],
+  "countries_allowed": ["list", "of", "countries"] or ["all"],
   "level_required": "string or empty",
   "field_required": "string or empty",
   "reward": "string describing prizes/benefits",
-  "application_url": "string",
+  "application_url": "Direct link to apply",
   "confidence": 0.0 to 1.0
 }}
-
-RULES:
-- Use type "ambassador" for campus/student ambassador, student champion, community lead, or
-  student developer advocate programs where students represent an organization on campus.
-- Never invent deadlines. If unsure, use null.
-- Extract actual data from the text; do not hallucinate.
-- confidence: 0.9+ if clearly an opportunity, 0.5-0.9 if uncertain, <0.5 if probably not an opportunity.
 """
 
 
@@ -261,15 +303,25 @@ async def extract_opportunity(
     item: dict[str, Any],
     llm: LLMClient,
 ) -> dict[str, Any]:
-    """Use LLM to extract structured fields from raw opportunity data."""
+    """Perform research and use LLM to extract and verify opportunity availability."""
     try:
+        today_gmt = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        raw_text = item.get("raw_text", "")
+
+        # Deep research: If raw_text is short, fetch live web page snippet
+        if len(raw_text.strip()) < 300 and item.get("source_url"):
+            page_content = await _fetch_page_snippet(item["source_url"])
+            if page_content:
+                raw_text = f"{raw_text}\n\nLive Page Content:\n{page_content}"
+
         data = await llm.generate_json(
             _EXTRACT_PROMPT.format(
-                raw_text=item.get("raw_text", "")[:1000],
+                today_gmt=today_gmt,
+                raw_text=raw_text[:2500],
                 title=item.get("title", ""),
                 source_url=item.get("source_url", ""),
             ),
-            system="You are a data extraction engine for student opportunities.",
+            system="You are an expert Opportunity Research & Verification Agent. Filter out closed or expired programs.",
         )
 
         # Merge LLM extraction with original data
@@ -359,36 +411,57 @@ async def run_scan(
 
     log.info("scan.deduped", unique=len(unique_items), removed=len(all_raw) - len(unique_items))
 
-    # Extract, score, and store
+    # Extract, research verify, score, and store
+    today_utc = datetime.now(timezone.utc).date()
     new_count = 0
     for item in unique_items:
         try:
-            # LLM extraction
+            # LLM extraction & research verification
             extracted = await extract_opportunity(item, llm)
+
+            # 1. Availability check: discard closed, ended, or archived items
+            if extracted.get("is_available") is False or extracted.get("status") == "closed":
+                log.info(
+                    "scan.item_closed_skipped",
+                    title=item.get("title"),
+                    reason=extracted.get("availability_reason", "Closed/concluded"),
+                )
+                continue
 
             # Build Opportunity model for scoring
             opp = _dict_to_opportunity(extracted)
 
-            # Scam check
-            is_scam, scam_reason = check_scam(opp)
-            opp.is_scam = is_scam
-            opp.scam_reason = scam_reason
+            # 2. Expiration check: discard if deadline has passed in GMT 0:00
+            if opp.deadline and opp.deadline < today_utc:
+                log.info("scan.item_expired_skipped", title=opp.title, deadline=str(opp.deadline))
+                continue
 
-            # Eligibility check
+            # 3. Scam check
+            is_scam, scam_reason = check_scam(opp)
+            if is_scam:
+                log.info("scan.item_scam_skipped", title=opp.title, reason=scam_reason)
+                continue
+            opp.is_scam = False
+            opp.scam_reason = ""
+
+            # 4. Eligibility check
             verdict, reason = await check_eligibility(opp, profile, llm)
             opp.eligibility_verdict = verdict
             opp.eligibility_reason = reason
 
-            # Skip scoring for ineligible
-            if verdict != EligibilityVerdict.NOT_ELIGIBLE:
-                opp.fit_score, opp.fit_reason = await compute_fit_score(
-                    opp,
-                    profile,
-                    llm,
-                    use_llm_relevance=False,  # heuristic for speed
-                )
+            if verdict == EligibilityVerdict.NOT_ELIGIBLE:
+                log.info("scan.item_ineligible_skipped", title=opp.title, reason=reason)
+                continue
 
-            # Store
+            # Compute fit score
+            opp.fit_score, opp.fit_reason = await compute_fit_score(
+                opp,
+                profile,
+                llm,
+                use_llm_relevance=False,
+            )
+
+            # Store ONLY verified, active, open opportunities
             async with get_session() as session:
                 row_data = _opportunity_to_row_dict(opp, extracted.get("external_id", ""))
                 _, is_new = await upsert_opportunity(session, row_data)
@@ -399,6 +472,27 @@ async def run_scan(
         except Exception as exc:
             log.warning("scan.item_failed", title=item.get("title"), error=str(exc))
             errors.append(f"Item '{item.get('title', 'unknown')}': {exc}")
+
+    # Auto-purge any legacy expired opportunities from active database
+    try:
+        from sqlalchemy import delete, select
+
+        from todaytech.core.database import OpportunityRow, UserStateRow
+
+        async with get_session() as session:
+            cleanup_stmt = (
+                delete(OpportunityRow)
+                .where(OpportunityRow.deadline < today_utc)
+                .where(
+                    ~OpportunityRow.external_id.in_(
+                        select(UserStateRow.opportunity_id).where(UserStateRow.status == "applied")
+                    )
+                )
+            )
+            await session.execute(cleanup_stmt)
+            await session.commit()
+    except Exception as exc:
+        log.warning("scan.cleanup_failed", error=str(exc))
 
     # Update scan record
     async with get_session() as session:

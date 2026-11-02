@@ -362,6 +362,10 @@ def create_app() -> FastAPI:
 
             opp_status = user_states.get(opp.external_id, "radar")
 
+            # Filter out opportunities that have ended / passed deadline
+            if opp_status != "applied" and opp.deadline and opp.deadline < today:
+                continue
+
             # Status filter
             if (
                 status == "saved"

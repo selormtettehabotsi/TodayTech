@@ -6,7 +6,7 @@ The engine never says "Eligible" when confidence is low; it falls back to
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime, timezone
 
 import structlog
 
@@ -22,9 +22,10 @@ log = structlog.get_logger()
 
 
 def _check_deadline(opp: Opportunity) -> tuple[EligibilityVerdict, str] | None:
-    """If the deadline has passed, not eligible."""
-    if opp.deadline and opp.deadline < date.today():
-        return EligibilityVerdict.NOT_ELIGIBLE, f"Deadline passed ({opp.deadline})"
+    """If the deadline has passed in GMT 0:00, not eligible."""
+    today = datetime.now(timezone.utc).date()
+    if opp.deadline and opp.deadline < today:
+        return EligibilityVerdict.NOT_ELIGIBLE, f"Deadline passed on {opp.deadline} (GMT 0:00)"
     return None
 
 

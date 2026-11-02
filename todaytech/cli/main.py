@@ -340,6 +340,8 @@ def opportunities(limit: int) -> None:
         table.add_column("Deadline (GMT 0:00)", style="yellow")
 
         for opp in opps:
+            if opp.deadline and opp.deadline < today:
+                continue
             if opp.deadline:
                 days_left = (opp.deadline - today).days
                 deadline_str = f"{opp.deadline} ({days_left}d)"
