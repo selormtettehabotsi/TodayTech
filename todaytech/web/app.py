@@ -237,7 +237,7 @@ def create_app() -> FastAPI:
 
         # Dual mode: launch Telegram bot daemon if credentials are present
         bot_app = None
-        run_bot = os.environ.get("ENABLE_BOT_IN_WEB", "1") != "0"
+        run_bot = os.environ.get("ENABLE_BOT_IN_WEB", "0") == "1"
         if (
             run_bot
             and settings.telegram_bot_token
@@ -252,8 +252,25 @@ def create_app() -> FastAPI:
 
                 bot_app = Application.builder().token(settings.telegram_bot_token).build()
                 bot_app.bot_data["settings"] = settings
-                bot_app.add_handler(CommandHandler("start", cmd_start))
+                from todaytech.bot.app import (
+                    cmd_apply,
+                    cmd_deadlines,
+                    cmd_details,
+                    cmd_ignore,
+                    cmd_save,
+                    cmd_saved,
+                    cmd_update,
+                )
+
+                bot_app.add_handler(CommandHandler(["start", "help"], cmd_start))
                 bot_app.add_handler(CommandHandler("setup", cmd_setup))
+                bot_app.add_handler(CommandHandler(["update", "scan", "digest"], cmd_update))
+                bot_app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
+                bot_app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
+                bot_app.add_handler(CommandHandler("apply", cmd_apply))
+                bot_app.add_handler(CommandHandler("details", cmd_details))
+                bot_app.add_handler(CommandHandler("save", cmd_save))
+                bot_app.add_handler(CommandHandler("ignore", cmd_ignore))
                 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
                 profile = load_profile(settings.profile_path)

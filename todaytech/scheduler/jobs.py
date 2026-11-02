@@ -79,13 +79,20 @@ async def _daily_digest_job(context: Any) -> None:
             unhealthy_sources=result.get("unhealthy_sources", []),
         )
 
-        # Send to user
-        await context.bot.send_message(
-            chat_id=settings.telegram_user_id,
-            text=digest,
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        # Send to user (with plain-text fallback on markdown error)
+        try:
+            await context.bot.send_message(
+                chat_id=settings.telegram_user_id,
+                text=digest,
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            await context.bot.send_message(
+                chat_id=settings.telegram_user_id,
+                text=digest,
+                disable_web_page_preview=True,
+            )
         log.info("scheduler.digest_sent")
 
     except Exception as exc:
@@ -129,12 +136,19 @@ async def _deadline_reminder_job(context: Any) -> None:
 
         if reminders:
             text = "⏰ **Deadline Reminders**\n\n" + "\n\n".join(reminders)
-            await context.bot.send_message(
-                chat_id=settings.telegram_user_id,
-                text=text,
-                parse_mode="Markdown",
-                disable_web_page_preview=True,
-            )
+            try:
+                await context.bot.send_message(
+                    chat_id=settings.telegram_user_id,
+                    text=text,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=settings.telegram_user_id,
+                    text=text,
+                    disable_web_page_preview=True,
+                )
             log.info("scheduler.reminders_sent", count=len(reminders))
 
     except Exception as exc:

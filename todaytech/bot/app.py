@@ -38,16 +38,32 @@ log = structlog.get_logger()
 
 
 def auth_required(func):
-    """Decorator: only allow the configured user ID."""
+    """Decorator: verify authorized user ID and assist unauthorized users with their ID."""
 
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings: Settings = context.bot_data["settings"]
-        if update.effective_user and update.effective_user.id != settings.telegram_user_id:
+        sender_id = update.effective_user.id if update.effective_user else None
+
+        if sender_id and sender_id != settings.telegram_user_id:
+            user_id = update.effective_user.id
+            username = update.effective_user.username or update.effective_user.first_name or "there"
             log.warning(
                 "bot.unauthorized",
-                user_id=update.effective_user.id,
+                user_id=user_id,
+                username=username,
+                configured_user_id=settings.telegram_user_id,
             )
-            return  # Silently ignore
+            if update.message:
+                await update.message.reply_text(
+                    f"👋 Hello {username}!\n\n"
+                    f"Your numeric Telegram User ID is: `{user_id}`\n\n"
+                    f"🔒 This TodayTech bot is configured for User ID: `{settings.telegram_user_id}`.\n\n"
+                    f"To authorize this account, update `.env` on your server:\n"
+                    f"`TELEGRAM_USER_ID={user_id}`\n\n"
+                    f"Then restart TodayTech (`sudo docker compose restart todaytech-bot`).",
+                    parse_mode="Markdown",
+                )
+            return
         return await func(update, context)
 
     return wrapper
@@ -59,14 +75,26 @@ def auth_required(func):
 
 
 async def _send_long(update: Update, text: str) -> None:
-    """Send a message, splitting at 4096 chars if needed (Telegram limit)."""
+    """Send a message, splitting at 4000 chars if needed (Telegram limit), with markdown fallback."""
+    if not update.message:
+        return
     max_len = 4000
     if len(text) <= max_len:
-        await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+        try:
+            await update.message.reply_text(
+                text, parse_mode="Markdown", disable_web_page_preview=True
+            )
+        except Exception:
+            await update.message.reply_text(text, disable_web_page_preview=True)
         return
     chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
     for chunk in chunks:
-        await update.message.reply_text(chunk, parse_mode="Markdown", disable_web_page_preview=True)
+        try:
+            await update.message.reply_text(
+                chunk, parse_mode="Markdown", disable_web_page_preview=True
+            )
+        except Exception:
+            await update.message.reply_text(chunk, disable_web_page_preview=True)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +228,7 @@ async def cmd_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         stmt = select(OpportunityRow).where(OpportunityRow.external_id.startswith(opp_id))
         result = await session.execute(stmt)
-        opp = result.scalar_one_or_none()
+        opp = result.scalars().first()
 
     if not opp:
         await update.message.reply_text(
@@ -341,15 +369,17 @@ async def cmd_add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 @auth_required
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route natural-language messages to the appropriate handler."""
-    text = (update.message.text or "").strip().lower()
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip().lower().lstrip("/")
 
-    if text.startswith("update me") or text in ("scan", "refresh", "what's new"):
+    if text.startswith("update") or text in ("scan", "refresh", "what's new", "digest"):
         return await cmd_update(update, context)
     elif text.startswith("only ") or text.startswith("show "):
         return await cmd_filter(update, context)
     elif text.startswith("detail"):
         return await cmd_details(update, context)
-    elif text.startswith("apply "):
+    elif text.startswith("apply"):
         return await cmd_apply(update, context)
     elif text.startswith("save "):
         return await cmd_save(update, context)
@@ -361,14 +391,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return await cmd_deadlines(update, context)
     elif text.startswith("add source"):
         return await cmd_add_source(update, context)
+    elif text in ("help", "start", "menu"):
+        return await cmd_start(update, context)
     else:
         await update.message.reply_text(
             "🤔 I didn't understand that. Try:\n"
-            "• `update me`\n"
-            "• `only hackathons`\n"
-            "• `details <id>`\n"
-            "• `apply <id>`\n"
-            "• `saved` / `deadlines`",
+            "• `/update` — run scan & get today's digest\n"
+            "• `only hackathons` or `only scholarships`\n"
+            "• `/details <id>`\n"
+            "• `/apply <id>` — prepare tailored draft\n"
+            "• `/saved` — your saved opportunities\n"
+            "• `/deadlines` — upcoming closing dates\n"
+            "• `/help` — view full command menu",
             parse_mode="Markdown",
         )
 
@@ -427,8 +461,15 @@ async def start_bot(settings: Settings) -> None:
     app.bot_data["settings"] = settings
 
     # Register handlers
-    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler(["start", "help"], cmd_start))
     app.add_handler(CommandHandler("setup", cmd_setup))
+    app.add_handler(CommandHandler(["update", "scan", "digest"], cmd_update))
+    app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
+    app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
+    app.add_handler(CommandHandler("apply", cmd_apply))
+    app.add_handler(CommandHandler("details", cmd_details))
+    app.add_handler(CommandHandler("save", cmd_save))
+    app.add_handler(CommandHandler("ignore", cmd_ignore))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Set up scheduler for daily digests and reminders

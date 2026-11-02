@@ -40,5 +40,6 @@ services:
       - TODAYTECH_DATA_DIR=/app/data
       - TODAYTECH_PROFILE=/app/profile.yaml
       - TODAYTECH_SOURCES=/app/sources.yaml
+      - ENABLE_BOT_IN_WEB=0
       - PYTHONUNBUFFERED=1
     command: ["web", "--host", "0.0.0.0", "--port", "8000"]
