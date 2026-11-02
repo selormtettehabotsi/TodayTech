@@ -30,7 +30,9 @@ class SearchCollector(Collector):
 
     async def collect(self, queries: list[str]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        for query in queries:
+        # Focus on top 12 targeted queries per search engine to prevent free quota burnout and lengthy scans
+        selected = queries[:12] if len(queries) > 12 else queries
+        for query in selected:
             try:
                 items = await self._search(query)
                 results.extend(items)

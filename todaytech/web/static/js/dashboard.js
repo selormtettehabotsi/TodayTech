@@ -824,27 +824,92 @@ async function saveSettings() {
   }
 }
 
+let scanPollInterval = null;
+
+async function manualRefresh() {
+  const refreshBtn = document.getElementById('refreshBtn');
+  const refreshText = document.getElementById('refreshBtnText');
+  if (refreshBtn) refreshBtn.disabled = true;
+  if (refreshText) refreshText.textContent = 'Refreshing...';
+
+  try {
+    await Promise.all([loadStats(), loadOpportunities(), loadPipeline()]);
+    showToast('Feed refreshed with latest data!');
+  } catch (err) {
+    showToast('Failed to refresh feed.');
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+    if (refreshText) refreshText.textContent = 'Refresh';
+  }
+}
+
 async function triggerScan() {
   const scanBtn = document.getElementById('scanBtn');
   const scanText = document.getElementById('scanBtnText');
+  if (scanBtn.disabled) return;
+
   scanBtn.disabled = true;
-  scanText.textContent = 'Scanning...';
+  scanText.textContent = 'Starting scan...';
 
   try {
-    await fetch('/api/scan', { method: 'POST' });
-    showToast('Scan started in background. New matches will populate shortly.');
+    const res = await fetch('/api/scan', { method: 'POST', cache: 'no-store' });
+    const data = await res.json();
+    showToast(data.message || 'Scan started. Searching live opportunities...');
+
+    let seconds = 0;
+    if (scanPollInterval) clearInterval(scanPollInterval);
+
+    scanPollInterval = setInterval(async () => {
+      seconds += 2;
+      scanText.textContent = `Scanning (${seconds}s)...`;
+
+      try {
+        const statusRes = await fetch('/api/scan/status', { cache: 'no-store' });
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          if (!status.running) {
+            clearInterval(scanPollInterval);
+            scanPollInterval = null;
+            scanBtn.disabled = false;
+            scanText.textContent = 'Scan Sources';
+
+            const newMsg = status.items_new ? ` (${status.items_new} new!)` : '';
+            showToast(`Scan complete! Found ${status.items_found || 0} opportunities${newMsg}.`);
+            await loadStats();
+            await loadOpportunities();
+            await loadPipeline();
+          }
+        }
+      } catch (pollErr) {
+        console.debug('Scan status check error', pollErr);
+      }
+
+      if (seconds >= 120) {
+        clearInterval(scanPollInterval);
+        scanPollInterval = null;
+        scanBtn.disabled = false;
+        scanText.textContent = 'Scan Sources';
+        loadStats();
+        loadOpportunities();
+        loadPipeline();
+      }
+    }, 2000);
+
   } catch (err) {
     showToast('Failed to start scan.');
-  } finally {
-    setTimeout(() => {
-      scanBtn.disabled = false;
-      scanText.textContent = 'Scan Sources';
-      loadStats();
-      loadOpportunities();
-      loadPipeline();
-    }, 2500);
+    scanBtn.disabled = false;
+    scanText.textContent = 'Scan Sources';
   }
 }
+
+// Background auto-refresh feed every 45s if tab is visible
+setInterval(() => {
+  if (!document.hidden && !scanPollInterval) {
+    loadStats();
+    loadOpportunities();
+    loadPipeline();
+  }
+}, 45000);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Toast Notifications

@@ -136,11 +136,14 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @auth_required
 async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle 'update me' — run scan and send digest."""
-    await update.message.reply_text("🔍 Scanning for opportunities... This may take a few minutes.")
+    """Handle 'update me' — run fresh scan and send digest."""
+    await update.message.reply_text(
+        "🔍 Running fresh scan across live sources... This may take up to a minute."
+    )
 
     try:
-        result = await run_scan()
+        # Always force fresh scan on user request
+        result = await run_scan(force=True)
 
         if "error" in result:
             await update.message.reply_text(f"❌ {result['error']}")
@@ -154,7 +157,10 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             opportunities,
             unhealthy_sources=result.get("unhealthy_sources", []),
         )
-        await _send_long(update, digest)
+        new_count = result.get("items_new", 0)
+        found_count = result.get("items_found", 0)
+        header = f"✨ **Scan Refresh Complete!**\nFound {found_count} opportunities ({new_count} new to your radar).\n\n"
+        await _send_long(update, header + digest)
 
     except Exception as exc:
         log.error("bot.update_failed", error=str(exc))

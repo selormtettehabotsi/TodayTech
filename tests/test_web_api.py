@@ -211,3 +211,15 @@ async def test_api_multiple_application_rows():
         data = res.json()
         assert data["id"] == "d41c7b2e9a0f5c63"
         assert data["has_drafts"] is True
+
+@pytest.mark.asyncio
+async def test_api_scan_status():
+    """Verify that /api/scan/status returns running state and no-cache headers."""
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/api/scan/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert "running" in data
+        assert "no-cache" in res.headers.get("cache-control", "")

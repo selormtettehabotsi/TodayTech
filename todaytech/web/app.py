@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 import yaml
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -215,6 +215,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def add_no_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
     # Static assets
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -628,16 +637,41 @@ def create_app() -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{clean_name}"'},
         )
 
+    scan_state: dict[str, Any] = {
+        "running": False,
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+        "items_new": 0,
+        "items_found": 0,
+    }
+
     async def _safe_scan() -> None:
+        scan_state["running"] = True
+        scan_state["started_at"] = datetime.now(timezone.utc).isoformat()
+        scan_state["finished_at"] = None
+        scan_state["error"] = None
         try:
-            await run_scan(force=True)
+            result = await run_scan(force=True)
+            scan_state["items_new"] = result.get("items_new", 0)
+            scan_state["items_found"] = result.get("items_found", 0)
         except Exception as exc:
             log.warning("web.scan_failed", error=str(exc))
+            scan_state["error"] = str(exc)
+        finally:
+            scan_state["running"] = False
+            scan_state["finished_at"] = datetime.now(timezone.utc).isoformat()
 
     @app.post("/api/scan")
-    async def trigger_scan(background_tasks: BackgroundTasks) -> dict[str, str]:
+    async def trigger_scan(background_tasks: BackgroundTasks) -> dict[str, Any]:
+        if scan_state["running"]:
+            return {"message": "Scan already in progress", "running": True}
         background_tasks.add_task(_safe_scan)
-        return {"message": "Scan started in background"}
+        return {"message": "Scan started in background", "running": True}
+
+    @app.get("/api/scan/status")
+    async def get_scan_status() -> dict[str, Any]:
+        return scan_state
 
     @app.get("/api/digest")
     async def get_daily_digest(timeframe: str = Query("day")) -> dict[str, Any]:

@@ -89,7 +89,7 @@ class MLHCollector(Collector):
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15))
     async def collect(self, queries: list[str]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        url = "https://mlh.io/seasons/2025/events"
+        url = "https://mlh.io/events"
 
         async with httpx.AsyncClient(timeout=30, headers=_HEADERS, follow_redirects=True) as client:
             resp = await client.get(url)
@@ -143,6 +143,9 @@ class DevfolioCollector(Collector):
 
         async with httpx.AsyncClient(timeout=30, headers=_HEADERS) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                log.info("collector.unstop_blocked_by_cloudflare")
+                return []
             resp.raise_for_status()
             data = resp.json()
 
@@ -193,6 +196,9 @@ class UnstopCollector(Collector):
 
         async with httpx.AsyncClient(timeout=30, headers=_HEADERS) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code == 403:
+                log.info("collector.unstop_blocked_by_cloudflare")
+                return []
             resp.raise_for_status()
             data = resp.json()
 
