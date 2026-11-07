@@ -90,7 +90,6 @@ DEFAULT_TRUSTED_PROXIES: tuple[str, ...] = (
     "172.16.0.0/12",  # Docker container bridge networks (172.16.0.0 - 172.31.255.255)
     "10.0.0.0/8",  # Private network range
     "192.168.0.0/16",  # Private network range
-    "testclient",  # FastAPI/Starlette TestClient
 )
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as dt_time
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -232,14 +233,15 @@ def setup_scheduler(
     log.info("scheduler.reverification_set")
 
     # IP Watcher job: checks public IP and alerts owner on change
+    interval_mins = getattr(settings, "ip_watcher_interval_minutes", 5) or 5
     job_queue.run_repeating(
         _ip_watcher_job,
-        interval=timedelta(minutes=30),
-        first=timedelta(seconds=30),
+        interval=timedelta(minutes=interval_mins),
+        first=timedelta(seconds=1),  # Runs once at startup
         data={"settings": settings},
         name="ip_watcher",
     )
-    log.info("scheduler.ip_watcher_set")
+    log.info("scheduler.ip_watcher_set", interval_minutes=interval_mins)
 
 
 async def _reverification_job(context: Any) -> None:
@@ -352,38 +354,80 @@ async def _deadline_reminder_job(context: Any) -> None:
 _last_known_ip: str | None = None
 
 
+def _get_ip_storage_path(settings: Settings) -> Path:
+    """Path to the persisted IP storage file."""
+    data_dir = getattr(settings, "data_dir", Path("data"))
+    try:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return Path(data_dir) / "last_known_ip.txt"
+
+
+def get_last_known_ip(settings: Settings) -> str | None:
+    """Retrieve last known IP from memory cache or persisted disk storage."""
+    global _last_known_ip
+    if _last_known_ip:
+        return _last_known_ip
+    path = _get_ip_storage_path(settings)
+    if path.exists():
+        try:
+            ip = path.read_text(encoding="utf-8").strip()
+            if ip:
+                _last_known_ip = ip
+                return ip
+        except Exception:
+            pass
+    return None
+
+
+def set_last_known_ip(ip: str, settings: Settings) -> None:
+    """Update last known IP in memory cache and persist to disk."""
+    global _last_known_ip
+    _last_known_ip = ip
+    path = _get_ip_storage_path(settings)
+    try:
+        path.write_text(ip, encoding="utf-8")
+    except Exception as exc:
+        log.warning("scheduler.ip_storage_write_failed", error=str(exc))
+
+
+async def fetch_public_ip() -> str | None:
+    """Query external IP echo services to determine public IP address."""
+    for service_url in (
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ):
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(service_url)
+                if resp.status_code == 200 and resp.text.strip():
+                    return resp.text.strip()
+        except Exception:
+            continue
+    return None
+
+
 async def _ip_watcher_job(context: Any) -> None:
     """Job: check server's public IP address and notify owner if it changes."""
-    global _last_known_ip
     settings: Settings = context.job.data["settings"]
 
     try:
-        current_ip = None
-        for service_url in (
-            "https://api.ipify.org",
-            "https://icanhazip.com",
-            "https://ifconfig.me/ip",
-        ):
-            try:
-                async with httpx.AsyncClient(timeout=5) as client:
-                    resp = await client.get(service_url)
-                    if resp.status_code == 200 and resp.text.strip():
-                        current_ip = resp.text.strip()
-                        break
-            except Exception:
-                continue
-
+        current_ip = await fetch_public_ip()
         if not current_ip:
             return
 
-        if _last_known_ip is None:
-            _last_known_ip = current_ip
+        old_ip = get_last_known_ip(settings)
+
+        if old_ip is None:
+            # First initialization ever
+            set_last_known_ip(current_ip, settings)
             log.info("scheduler.ip_watcher_initialized", ip=current_ip)
             return
 
-        if current_ip != _last_known_ip:
-            old_ip = _last_known_ip
-            _last_known_ip = current_ip
+        if current_ip != old_ip:
+            set_last_known_ip(current_ip, settings)
             alert_text = (
                 f"🌐 *TodayTech IP Update Alert*\n\n"
                 f"The server's public IP address has changed:\n"
@@ -391,19 +435,21 @@ async def _ip_watcher_job(context: Any) -> None:
                 f"• New IP: `{current_ip}`\n\n"
                 f"🔗 **New Dashboard URL:** [http://{current_ip}/](http://{current_ip}/)"
             )
-            try:
-                await context.bot.send_message(
-                    chat_id=settings.telegram_user_id,
-                    text=alert_text,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=settings.telegram_user_id,
-                    text=alert_text,
-                    disable_web_page_preview=True,
-                )
+            bot = getattr(context, "bot", None)
+            if bot:
+                try:
+                    await bot.send_message(
+                        chat_id=settings.telegram_user_id,
+                        text=alert_text,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    await bot.send_message(
+                        chat_id=settings.telegram_user_id,
+                        text=alert_text,
+                        disable_web_page_preview=True,
+                    )
             log.info("scheduler.ip_changed", old_ip=old_ip, new_ip=current_ip)
     except Exception as exc:
         log.warning("scheduler.ip_watcher_failed", error=str(exc))

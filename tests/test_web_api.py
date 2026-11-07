@@ -11,12 +11,31 @@ from todaytech.web.rate_limit import get_client_ip, is_trusted_proxy, rate_limit
 
 
 @pytest.fixture(autouse=True)
-async def setup_test_db(tmp_path):
-    # Isolated DB per test
+async def setup_test_db(tmp_path, monkeypatch):
+    # Isolated DB per test and test-only proxy configuration
+    monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1,::1,172.16.0.0/12,testclient")
     rate_limiter.reset()
     await init_db(f"sqlite+aiosqlite:///{(tmp_path / 'test.db').as_posix()}")
     async with get_session() as session:
         await _seed_demo_if_empty(session)
+
+
+def test_production_default_trusted_proxies_contain_no_testclient():
+    """Requirement Task 2: Confirm DEFAULT_TRUSTED_PROXIES contains only real proxy ranges
+
+    and never includes test-only values like 'testclient'.
+    """
+    import ipaddress
+
+    from todaytech.web.rate_limit import DEFAULT_TRUSTED_PROXIES
+
+    assert "testclient" not in DEFAULT_TRUSTED_PROXIES
+
+    for proxy in DEFAULT_TRUSTED_PROXIES:
+        if "/" in proxy:
+            ipaddress.ip_network(proxy, strict=False)
+        else:
+            ipaddress.ip_address(proxy)
 
 
 @pytest.mark.asyncio

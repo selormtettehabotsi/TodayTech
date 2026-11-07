@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///data/todaytech.db"
 
+    # ── IP Watcher ───────────────────────────────────────────
+    ip_watcher_interval_minutes: int = Field(
+        default=5, validation_alias="IP_WATCHER_INTERVAL_MINUTES"
+    )
+
     # ── Logging ──────────────────────────────────────────────
     log_level: str = "INFO"
 
@@ -75,15 +80,25 @@ class Settings(BaseSettings):
     packs_dir: Path = Field(default=Path("sources/packs"))
     data_dir: Path = Field(default=Path("data"))
 
-    @field_validator("telegram_api_id", "telegram_user_id", "imap_port", mode="before")
+    @field_validator(
+        "telegram_api_id",
+        "telegram_user_id",
+        "imap_port",
+        "ip_watcher_interval_minutes",
+        mode="before",
+    )
     @classmethod
     def _coerce_empty_int(cls, v: Any, info: Any) -> int:
         if v is None or v == "":
-            return 993 if info.field_name == "imap_port" else 0
+            if info.field_name == "imap_port":
+                return 993
+            if info.field_name == "ip_watcher_interval_minutes":
+                return 5
+            return 0
         try:
             return int(str(v).strip())
         except (ValueError, TypeError):
-            return 0
+            return 5 if info.field_name == "ip_watcher_interval_minutes" else 0
 
     # ── Validation helpers ───────────────────────────────────
 

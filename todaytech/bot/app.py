@@ -61,16 +61,12 @@ def auth_required(func):
             )
             if update.message is not None:
                 await update.message.reply_text(
-                    f"⛔ *Access Restricted*\n\n"
-                    f"This TodayTech bot instance is private and restricted to the bot owner.\n"
-                    f"Your numeric Telegram User ID is: `{user_id}`.\n"
-                    f"Configured Owner ID: `{settings.telegram_user_id}`.",
-                    parse_mode="Markdown",
+                    "⛔ Access restricted. This TodayTech bot is private.",
                 )
             elif getattr(update, "callback_query", None) is not None:
                 try:
                     await update.callback_query.answer(
-                        "⛔ Access restricted to bot owner.", show_alert=True
+                        "⛔ Access restricted. This bot is private.", show_alert=True
                     )
                 except Exception:
                     pass
@@ -588,22 +584,10 @@ async def cmd_ip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /ip — return current server public IP and dashboard URL."""
     if not update.message:
         return
-    import httpx
 
-    public_ip = "Unknown"
-    for service_url in (
-        "https://api.ipify.org",
-        "https://icanhazip.com",
-        "https://ifconfig.me/ip",
-    ):
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                res = await client.get(service_url)
-                if res.status_code == 200 and res.text.strip():
-                    public_ip = res.text.strip()
-                    break
-        except Exception:
-            continue
+    from todaytech.scheduler.jobs import fetch_public_ip
+
+    public_ip = (await fetch_public_ip()) or "Unknown"
 
     msg = (
         f"🌐 *TodayTech Server Public IP*\n\n"
