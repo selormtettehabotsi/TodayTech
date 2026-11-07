@@ -105,6 +105,8 @@ def run_merge_duplicates(db_path: str) -> dict:
         con.commit()
 
     # 4. Canonicalize URLs and populate dedupe_key for all rows (Task 4)
+    cur.execute("DROP INDEX IF EXISTS uq_opportunities_dedupe_key")
+    con.commit()
     cur.execute(
         "SELECT id, title, organizer, cycle_year, source_url, application_url FROM opportunities"
     )

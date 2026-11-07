@@ -232,6 +232,7 @@ def _migrate_schema(connection) -> None:
 
     # Task 4: Populate dedupe_key on existing rows
     try:
+        connection.execute(text("DROP INDEX IF EXISTS uq_opportunities_dedupe_key"))
         res_need_key = connection.execute(
             text(
                 "SELECT id, title, organizer, cycle_year, source_url, application_url FROM opportunities WHERE dedupe_key IS NULL OR dedupe_key = ''"

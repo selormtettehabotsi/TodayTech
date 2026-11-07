@@ -231,7 +231,7 @@ def compute_programme_signature(
     year = cycle_year
     if year is None:
         yr_match = re.search(r"\b(202\d)\b", title)
-        year = int(yr_match.group(1)) if yr_match else 2027
+        year = int(yr_match.group(1)) if yr_match else 2026
 
     return org_str, norm_prog, year
 
