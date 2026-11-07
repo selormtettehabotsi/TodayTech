@@ -5,8 +5,10 @@
 {$DOMAIN::80} {
     reverse_proxy todaytech-web:8000 {
         header_up Host {host}
-        header_up X-Real-IP {remote_host}
+        header_up -X-Forwarded-For
         header_up X-Forwarded-For {remote_host}
+        header_up -X-Real-IP
+        header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto {scheme}
     }
 

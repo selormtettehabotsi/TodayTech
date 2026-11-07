@@ -40,31 +40,40 @@ log = structlog.get_logger()
 
 
 def auth_required(func):
-    """Decorator: verify authorized user ID and assist unauthorized users with their ID."""
+    """Decorator: verify authorized user ID and reject any unauthorized users."""
 
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings: Settings = context.bot_data["settings"]
         sender_id = update.effective_user.id if update.effective_user else None
 
-        if sender_id and sender_id != settings.telegram_user_id:
-            user_id = update.effective_user.id
-            username = update.effective_user.username or update.effective_user.first_name or "there"
+        if not sender_id or sender_id != settings.telegram_user_id:
+            user_id = sender_id or 0
+            username = (
+                (update.effective_user.username or update.effective_user.first_name)
+                if update.effective_user
+                else "there"
+            )
             log.warning(
                 "bot.unauthorized",
                 user_id=user_id,
                 username=username,
                 configured_user_id=settings.telegram_user_id,
             )
-            if update.message:
+            if update.message is not None:
                 await update.message.reply_text(
-                    f"👋 Hello {username}!\n\n"
-                    f"Your numeric Telegram User ID is: `{user_id}`\n\n"
-                    f"🔒 This TodayTech bot is configured for User ID: `{settings.telegram_user_id}`.\n\n"
-                    f"To authorize this account, update `.env` on your server:\n"
-                    f"`TELEGRAM_USER_ID={user_id}`\n\n"
-                    f"Then restart TodayTech (`sudo docker compose restart todaytech-bot`).",
+                    f"⛔ *Access Restricted*\n\n"
+                    f"This TodayTech bot instance is private and restricted to the bot owner.\n"
+                    f"Your numeric Telegram User ID is: `{user_id}`.\n"
+                    f"Configured Owner ID: `{settings.telegram_user_id}`.",
                     parse_mode="Markdown",
                 )
+            elif getattr(update, "callback_query", None) is not None:
+                try:
+                    await update.callback_query.answer(
+                        "⛔ Access restricted to bot owner.", show_alert=True
+                    )
+                except Exception:
+                    pass
             return
         return await func(update, context)
 

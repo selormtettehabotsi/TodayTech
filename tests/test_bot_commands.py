@@ -9,11 +9,17 @@ import pytest
 
 from todaytech.bot.app import (
     _format_details,
+    cmd_apply,
     cmd_deadlines,
+    cmd_details,
     cmd_estimated,
+    cmd_ignore,
     cmd_ip,
     cmd_save,
     cmd_saved,
+    cmd_start,
+    cmd_update,
+    handle_message,
 )
 from todaytech.core.database import get_session, init_db, upsert_opportunity
 from todaytech.core.models import DateStatus
@@ -221,8 +227,117 @@ async def test_bot_auth_rejects_unauthorized_users():
     update.message.reply_text.assert_called_once()
     reply = update.message.reply_text.call_args[0][0]
     assert "999999999" in reply
-    assert "configured for User ID" in reply
+    assert "Access Restricted" in reply or "configured for User ID" in reply
     assert "Upcoming Confirmed Deadlines" not in reply
+
+
+@pytest.mark.parametrize(
+    ("command_func", "unauthorized_id", "extra_args"),
+    [
+        (cmd_update, 200000001, {}),
+        (cmd_apply, 200000002, {}),
+        (cmd_saved, 200000003, {}),
+        (cmd_ip, 200000004, {}),
+        (cmd_deadlines, 200000005, {}),
+        (cmd_estimated, 200000006, {}),
+        (cmd_details, 200000007, {}),
+        (cmd_save, 200000008, {}),
+        (cmd_ignore, 200000009, {}),
+        (cmd_start, 200000010, {}),
+        (handle_message, 200000011, {"text": "update"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_every_command_rejects_unauthorized_user_with_distinct_id(
+    command_func, unauthorized_id, extra_args
+):
+    """Requirement Task 2: Verify that every bot handler rejects non-owner users
+
+    with a different user ID per command, preventing scans, /apply, /saved, or /ip.
+    """
+    update = MagicMock()
+    update.effective_user.id = unauthorized_id
+    update.effective_user.username = f"intruder_{unauthorized_id}"
+    update.message = MagicMock()
+    update.message.text = extra_args.get("text", "/test")
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"settings": MagicMock(telegram_user_id=1291866098)}
+
+    await command_func(update, context)
+
+    update.message.reply_text.assert_called_once()
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Access Restricted" in reply or "configured for User ID" in reply
+    assert str(unauthorized_id) in reply
+    assert "Server Public IP" not in reply
+    assert "Active Matches" not in reply
+    assert "Tailored Application Assets" not in reply
+
+
+@pytest.mark.asyncio
+async def test_ip_watcher_simulated_change_sends_telegram_alert(monkeypatch):
+    """Requirement Task 3: Verify IP watcher detects IP change and sends Telegram alert to owner."""
+    import todaytech.scheduler.jobs as jobs_mod
+
+    # Reset initial state
+    jobs_mod._last_known_ip = None
+
+    context = MagicMock()
+    context.job.data = {"settings": MagicMock(telegram_user_id=1291866098)}
+    context.bot.send_message = AsyncMock()
+
+    # Step 1: Initial check with IP 3.91.100.116 (initializes baseline, sends no alert)
+    class MockClientInitial:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url):
+            res = MagicMock()
+            res.status_code = 200
+            res.text = "3.91.100.116"
+            return res
+
+    monkeypatch.setattr(jobs_mod.httpx, "AsyncClient", lambda **kw: MockClientInitial())
+
+    await jobs_mod._ip_watcher_job(context)
+    assert jobs_mod._last_known_ip == "3.91.100.116"
+    context.bot.send_message.assert_not_called()
+
+    # Step 2: Second check with unchanged IP -> no alert
+    await jobs_mod._ip_watcher_job(context)
+    context.bot.send_message.assert_not_called()
+
+    # Step 3: IP changes to 54.210.85.120 -> sends Telegram alert
+    class MockClientChanged:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url):
+            res = MagicMock()
+            res.status_code = 200
+            res.text = "54.210.85.120"
+            return res
+
+    monkeypatch.setattr(jobs_mod.httpx, "AsyncClient", lambda **kw: MockClientChanged())
+
+    await jobs_mod._ip_watcher_job(context)
+    assert jobs_mod._last_known_ip == "54.210.85.120"
+    context.bot.send_message.assert_called_once()
+    msg = context.bot.send_message.call_args.kwargs.get(
+        "text"
+    ) or context.bot.send_message.call_args[1].get("text")
+    assert "TodayTech IP Update Alert" in msg
+    assert "3.91.100.116" in msg
+    assert "54.210.85.120" in msg
+    assert "http://54.210.85.120/" in msg
 
 
 @pytest.mark.asyncio

@@ -243,6 +243,12 @@ def get_session() -> AsyncSession:
 
 async def upsert_opportunity(session: AsyncSession, data: dict) -> tuple[OpportunityRow, bool]:
     """Insert or update an opportunity.  Returns (row, is_new)."""
+    import json
+
+    if isinstance(data.get("countries_allowed"), list):
+        data = dict(data)
+        data["countries_allowed"] = json.dumps(data["countries_allowed"])
+
     ext_id = data.get("external_id", "")
     stmt = select(OpportunityRow).where(OpportunityRow.external_id == ext_id)
     result = await session.execute(stmt)

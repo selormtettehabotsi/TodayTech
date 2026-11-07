@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from todaytech.core.database import get_session, init_db
 from todaytech.web.app import _seed_demo_if_empty, create_app
-from todaytech.web.rate_limit import rate_limiter
+from todaytech.web.rate_limit import get_client_ip, is_trusted_proxy, rate_limiter
 
 
 @pytest.fixture(autouse=True)
@@ -211,6 +211,54 @@ async def test_rate_limiting_blocks_abuse():
         # Health endpoint remains accessible
         res_health = await client.get("/health", headers=headers)
         assert res_health.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_client_ip_buckets_and_spoof_protection():
+    """Requirement Task 1: Verify separate rate limit buckets per client IP
+
+    and ensure proxy headers from untrusted direct clients are ignored.
+    """
+    app = create_app()
+
+    # 1. Direct unit verification of get_client_ip
+    # Case A: Trusted proxy (Caddy / Docker network / 127.0.0.1 / testclient)
+    trusted_host = "172.18.0.4"
+    assert is_trusted_proxy(trusted_host) is True
+    assert (
+        get_client_ip({"X-Forwarded-For": "198.51.100.1"}, client_host=trusted_host)
+        == "198.51.100.1"
+    )
+    assert get_client_ip({"X-Real-IP": "198.51.100.2"}, client_host=trusted_host) == "198.51.100.2"
+
+    # Case B: Untrusted client directly connecting (spoofed header)
+    untrusted_host = "203.0.113.50"
+    assert is_trusted_proxy(untrusted_host) is False
+    # Spoofed header MUST BE IGNORED; real connecting socket IP must be used
+    spoofed_result = get_client_ip(
+        {"X-Forwarded-For": "1.2.3.4", "X-Real-IP": "5.6.7.8"},
+        client_host=untrusted_host,
+    )
+    assert spoofed_result == "203.0.113.50"
+
+    # 2. Integration verification: Two separate client IPs get independent rate limit buckets
+    rate_limiter.reset()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Client 1 makes 60 requests through trusted proxy
+        headers_client1 = {"X-Forwarded-For": "198.51.100.10"}
+        for _ in range(60):
+            res1 = await client.get("/api/stats", headers=headers_client1)
+            assert res1.status_code == 200
+
+        # 61st request from Client 1 is blocked
+        res1_blocked = await client.get("/api/stats", headers=headers_client1)
+        assert res1_blocked.status_code == 429
+
+        # Client 2 has a separate bucket: request immediately succeeds with 200
+        headers_client2 = {"X-Forwarded-For": "198.51.100.20"}
+        res2 = await client.get("/api/stats", headers=headers_client2)
+        assert res2.status_code == 200
 
 
 @pytest.mark.asyncio
