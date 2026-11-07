@@ -11,7 +11,6 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Sequence
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 import structlog
@@ -27,6 +26,10 @@ from todaytech.core.database import (
     get_session,
     upsert_opportunity,
 )
+from todaytech.core.dedupe import (
+    canonicalize_url,
+    compute_dedupe_key,
+)
 from todaytech.core.eligibility import check_eligibility, rule_check
 from todaytech.core.llm import LLMClient, create_llm_client_from_settings
 from todaytech.core.models import (
@@ -36,6 +39,7 @@ from todaytech.core.models import (
     OpportunityType,
     UserProfile,
 )
+from todaytech.core.roundup_filter import is_roundup_or_directory
 from todaytech.core.scam_filter import check_scam
 from todaytech.core.scoring import compute_fit_score
 from todaytech.core.verification import verify_official_page_deadline
@@ -179,21 +183,6 @@ def _linkedin_queries(profile: UserProfile) -> list[str]:
         queries.append("site:linkedin.com AWS cloud DevOps scholarship internship 2027")
 
     return queries
-
-
-# ---------------------------------------------------------------------------
-# URL canonicalization
-# ---------------------------------------------------------------------------
-
-
-def canonicalize_url(url: str) -> str:
-    """Normalize a URL for deduplication."""
-    if not url:
-        return ""
-    parsed = urlparse(url.strip().lower())
-    # Remove tracking params, fragments
-    clean_path = parsed.path.rstrip("/")
-    return urlunparse((parsed.scheme, parsed.netloc, clean_path, "", "", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +614,7 @@ async def validate_opportunity_batch(
     8. Cap results at 25 per scan.
     """
     seen_apply_urls: set[str] = set()
+    seen_dedupe_keys: set[str] = set()
     validated: list[Opportunity] = []
 
     for raw in raw_items:
@@ -647,18 +637,39 @@ async def validate_opportunity_batch(
                 data["fit_reason"] = data["match_reason"]
             opp = _dict_to_opportunity(data)
 
+        # Task 3: Reject roundup pages, listicles, directories, and finders
+        is_roundup, roundup_reason = is_roundup_or_directory(
+            opp.title,
+            opp.organizer,
+            opp.source_url,
+            opp.application_url,
+        )
+        if is_roundup:
+            log.info("validation.dropped_roundup_page", title=opp.title, reason=roundup_reason)
+            continue
+
         # 1. Drop items with no source_url
         src_url = str(opp.source_url or "").strip()
         if not src_url or src_url.lower() in ("none", "null", "n/a", "undefined", "#"):
             log.info("validation.dropped_missing_source_url", title=opp.title)
             continue
 
-        # 6. Deduplicate by apply_url (or source_url fallback)
+        # Task 4: Deduplicate by canonical dedupe key or canonical apply/source URL
+        dkey = compute_dedupe_key(
+            opp.title,
+            opp.organizer,
+            opp.cycle_year,
+            opp.source_url,
+            opp.application_url,
+        )
+        opp.dedupe_key = dkey
         apply_key = canonicalize_url(opp.application_url or opp.source_url)
-        if not apply_key or apply_key in seen_apply_urls:
-            log.info("validation.dropped_duplicate_apply_url", url=apply_key, title=opp.title)
+        if dkey in seen_dedupe_keys or (apply_key and apply_key in seen_apply_urls):
+            log.info("validation.dropped_duplicate_item", key=dkey, url=apply_key, title=opp.title)
             continue
-        seen_apply_urls.add(apply_key)
+        seen_dedupe_keys.add(dkey)
+        if apply_key:
+            seen_apply_urls.add(apply_key)
 
         # Normalize date_status
         date_status_str = (
@@ -1211,6 +1222,7 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         verified_on=verified_on_val,
         fetched_on=fetched_on_val,
         days_remaining=data.get("days_remaining"),
+        dedupe_key=data.get("dedupe_key"),
         source_name=data.get("source_name") or "",
         raw_text=data.get("raw_text") or "",
     )
@@ -1246,6 +1258,7 @@ def _opportunity_to_row_dict(opp: Opportunity, external_id: str) -> dict[str, An
         "verified_on": opp.verified_on,
         "fetched_on": opp.fetched_on,
         "days_remaining": opp.days_remaining,
+        "dedupe_key": opp.dedupe_key or "",
         "fit_score": opp.fit_score,
         "fit_reason": opp.fit_reason,
         "eligibility_verdict": opp.eligibility_verdict.value,

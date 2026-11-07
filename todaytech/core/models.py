@@ -199,6 +199,7 @@ class Opportunity(BaseModel):
     verified_on: date | None = None
     fetched_on: date | None = None
     days_remaining: int | None = None
+    dedupe_key: str | None = None
 
     # Enriched fields (post-processing)
     fit_score: int = 0  # 0-100

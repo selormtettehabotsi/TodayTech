@@ -115,11 +115,38 @@ function setupEventListeners() {
     });
   }
 
-  // Drawer Close
+  // Cards Grid Event Delegation for Details action and card clicks
+  const cardsGrid = document.getElementById('cardsGrid');
+  if (cardsGrid) {
+    cardsGrid.addEventListener('click', (e) => {
+      const actionBtn = e.target.closest('[data-action="details"]');
+      if (actionBtn) {
+        e.stopPropagation();
+        const oppId = actionBtn.dataset.id;
+        if (oppId) openDetails(oppId);
+        return;
+      }
+      const card = e.target.closest('.card');
+      if (card) {
+        const oppId = card.dataset.id;
+        if (oppId) openDetails(oppId);
+      }
+    });
+  }
+
+  // Drawer Close Button, Backdrop Click, and Mobile Touch
   const drawerClose = document.getElementById('drawerClose');
   const drawerBackdrop = document.getElementById('drawerBackdrop');
-  if (drawerClose) drawerClose.addEventListener('click', closeDetails);
-  if (drawerBackdrop) drawerBackdrop.addEventListener('click', closeDetails);
+  if (drawerClose) {
+    drawerClose.addEventListener('click', closeDetails);
+  }
+  if (drawerBackdrop) {
+    drawerBackdrop.addEventListener('click', closeDetails);
+    drawerBackdrop.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      closeDetails();
+    }, { passive: false });
+  }
 
   // Esc key close
   document.addEventListener('keydown', (e) => {
@@ -192,7 +219,7 @@ function renderCards(opportunities, container) {
     if (isConfirmed && opp.days_left !== null && opp.days_left !== undefined) {
       const isUrgent = opp.days_left <= 7;
       const badgeClass = isUrgent ? 'badge-urgent' : 'badge-standard';
-      dateBadge = `<span class="badge ${badgeClass}" title="Official Confirmed Deadline">${opp.days_left}d left</span>`;
+      dateBadge = `<span class="badge ${badgeClass}" title="Official Confirmed Deadline">${escapeHtml(opp.days_left)}d left</span>`;
     } else if (isEstimated) {
       dateBadge = `<span class="badge" style="background-color: var(--bg-surface-subtle); color: var(--text-muted); border: 1px dashed var(--border-medium);" title="Estimated Cycle Window">Estimated</span>`;
     }
@@ -212,9 +239,9 @@ function renderCards(opportunities, container) {
       <article class="card" data-id="${escapeHtml(opp.id)}">
         <div class="card-top">
           <span class="type-tag ${typeColorClass}">${escapeHtml(opp.type || 'Opportunity')}</span>
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="card-status-badges">
             ${dateBadge}
-            <span class="score-badge" title="Match Percentage">${opp.match_percentage ?? 85}%</span>
+            <span class="badge-score" title="Match Percentage">${opp.match_percentage ?? 85}%</span>
           </div>
         </div>
 
@@ -235,7 +262,7 @@ function renderCards(opportunities, container) {
 
         <div class="card-footer" style="margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between;">
           ${verifiedBadge}
-          <button class="btn btn-secondary btn-sm inspect-btn" data-id="${escapeHtml(opp.id)}">
+          <button class="btn btn-secondary btn-sm" data-action="details" data-id="${escapeHtml(opp.id)}">
             <span>Details</span>
             ${ICONS.externalLink}
           </button>
@@ -245,22 +272,6 @@ function renderCards(opportunities, container) {
   });
 
   container.innerHTML = safeHtml(cardsHtml);
-
-  // Attach card detail clicks
-  container.querySelectorAll('.inspect-btn').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const oppId = btn.dataset.id;
-      if (oppId) openDetails(oppId);
-    });
-  });
-
-  container.querySelectorAll('.card').forEach((card) => {
-    card.addEventListener('click', () => {
-      const oppId = card.dataset.id;
-      if (oppId) openDetails(oppId);
-    });
-  });
 }
 
 async function openDetails(opportunityId) {
@@ -274,34 +285,77 @@ async function openDetails(opportunityId) {
   if (!drawer || !drawerContent) return;
 
   drawerContent.innerHTML = safeHtml(`<div style="padding: 24px; color: var(--text-muted);">Loading opportunity details...</div>`);
-  drawer.classList.add('open');
-  if (drawerBackdrop) drawerBackdrop.classList.add('open');
+  drawer.classList.add('active', 'open');
+  if (drawerBackdrop) drawerBackdrop.classList.add('active', 'open');
 
   try {
-    const res = await fetch(`/api/opportunity/${opportunityId}`);
+    const res = await fetch(`/api/opportunity/${encodeURIComponent(opportunityId)}`);
     if (!res.ok) {
       drawerContent.innerHTML = safeHtml(`<div style="padding: 24px; color: var(--accent-terracotta-text);">Opportunity details could not be found.</div>`);
       return;
     }
 
     const opp = await res.json();
-    if (drawerTitle) drawerTitle.textContent = opp.title;
+    if (drawerTitle) drawerTitle.textContent = opp.title || 'Opportunity Details';
+
+    const hasValidSource = Boolean(opp.source_url && (opp.source_url.startsWith('http://') || opp.source_url.startsWith('https://')));
+    const hasValidApply = Boolean(opp.apply_url && (opp.apply_url.startsWith('http://') || opp.apply_url.startsWith('https://')));
+
+    if (sourceLink) {
+      if (hasValidSource) {
+        sourceLink.href = opp.source_url;
+        sourceLink.target = '_blank';
+        sourceLink.rel = 'noopener noreferrer';
+        sourceLink.style.display = 'inline-flex';
+      } else {
+        sourceLink.href = '#';
+        sourceLink.style.display = 'none';
+      }
+    }
 
     if (applyLink) {
-      applyLink.href = opp.apply_url || opp.source_url || '#';
-    }
-    if (sourceLink) {
-      sourceLink.href = opp.source_url || '#';
-      sourceLink.style.display = opp.source_url ? 'inline-flex' : 'none';
+      if (hasValidApply) {
+        applyLink.href = opp.apply_url;
+        applyLink.target = '_blank';
+        applyLink.rel = 'noopener noreferrer';
+        applyLink.style.display = 'inline-flex';
+      } else if (hasValidSource) {
+        applyLink.href = opp.source_url;
+        applyLink.target = '_blank';
+        applyLink.rel = 'noopener noreferrer';
+        applyLink.style.display = 'inline-flex';
+      } else {
+        applyLink.href = '#';
+        applyLink.style.display = 'none';
+      }
     }
 
     const isConfirmed = opp.date_status === 'confirmed';
-    const formattedDeadline = isConfirmed && opp.deadline ? formatDeadlineDate(opp.deadline) : 'Rolling / TBA';
+    const formattedDeadline = isConfirmed && opp.deadline ? formatDeadlineDate(opp.deadline) : null;
+    const verifiedDate = opp.verified_on ? formatDeadlineDate(opp.verified_on) : null;
+
+    let timingText = 'Rolling / TBA';
+    if (isConfirmed && formattedDeadline) {
+      timingText = formattedDeadline + (opp.days_left !== null && opp.days_left !== undefined ? ` (${opp.days_left} days left)` : '');
+    } else if (opp.estimated_window) {
+      timingText = opp.estimated_window;
+    }
+
+    const sourceStatusNotice = !hasValidSource
+      ? `
+        <div class="source-missing-notice" style="padding: 12px 14px; background-color: var(--accent-terracotta-bg); border: 1px solid var(--accent-terracotta-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--accent-terracotta-text); display: flex; align-items: center; gap: 8px;">
+          ${ICONS.shieldCheck}
+          <span>Official source link is not published or currently unavailable.</span>
+        </div>
+      `
+      : '';
 
     drawerContent.innerHTML = safeHtml(`
       <div style="display: flex; flex-direction: column; gap: 20px;">
+        ${sourceStatusNotice}
+
         <div style="background-color: var(--bg-surface-subtle); border-radius: var(--radius-md); padding: 16px; border: 1px solid var(--border-subtle);">
-          <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px;">Organizer & Type</div>
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px;">Organizer & Type</div>
           <div style="font-size: 16px; font-weight: 600; color: var(--text-main);">${escapeHtml(opp.organisation)} • <span style="text-transform: capitalize;">${escapeHtml(opp.type)}</span></div>
           <div style="font-size: 13.5px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(opp.location)} • ${escapeHtml(opp.field)}</div>
         </div>
@@ -312,7 +366,7 @@ async function openDetails(opportunityId) {
             <div style="font-size: 14px; font-weight: 600; color: ${isConfirmed ? 'var(--accent-sage-text)' : 'var(--accent-amber-text)'}; text-transform: capitalize; margin-top: 2px;">
               ${escapeHtml(opp.date_status)}
             </div>
-            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(formattedDeadline)}</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(timingText)}</div>
           </div>
 
           <div style="background-color: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px;">
@@ -323,6 +377,17 @@ async function openDetails(opportunityId) {
           </div>
         </div>
 
+        <div style="background-color: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;">Verification & Evidence</div>
+          <div style="font-size: 13px; color: var(--text-main); display: flex; align-items: center; gap: 6px;">
+            ${ICONS.shieldCheck}
+            <span>${verifiedDate ? 'Verified on ' + escapeHtml(verifiedDate) : 'Verification pending'}</span>
+          </div>
+          <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">
+            ${escapeHtml(opp.date_evidence || 'Confirmed against official organizer publications.')}
+          </div>
+        </div>
+
         ${opp.estimated_window ? `
           <div style="padding: 12px 14px; background-color: var(--accent-amber-bg); border: 1px solid var(--accent-amber-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--accent-amber-text);">
             <strong>Estimated Application Window:</strong> ${escapeHtml(opp.estimated_window)}
@@ -330,13 +395,23 @@ async function openDetails(opportunityId) {
         ` : ''}
 
         <div style="background-color: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px;">
-          <div style="font-size: 12.5px; font-weight: 600; color: var(--text-main); margin-bottom: 4px;">Telegram Bot Application Assistant</div>
-          <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
-            To save this opportunity, receive deadline countdown alerts, or draft tailored application materials, message your private TodayTech Telegram bot:
-          </p>
-          <code style="display: block; margin-top: 8px; padding: 6px 10px; background: var(--bg-surface); border-radius: 4px; font-size: 12px; font-family: monospace;">
-            /details ${escapeHtml(opp.id.substring(0, 8))}
-          </code>
+          <div style="font-size: 12.5px; font-weight: 600; color: var(--text-main); margin-bottom: 4px;">Official Application Links</div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            ${hasValidSource ? `
+              <a href="${escapeHtml(opp.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="align-self: flex-start;">
+                <span>Visit Official Source Page</span>
+                ${ICONS.externalLink}
+              </a>
+            ` : `
+              <div style="font-size: 12px; color: var(--text-muted);">Official source URL is not available.</div>
+            `}
+            ${hasValidApply ? `
+              <a href="${escapeHtml(opp.apply_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="align-self: flex-start;">
+                <span>Go to Application Portal</span>
+                ${ICONS.externalLink}
+              </a>
+            ` : ''}
+          </div>
         </div>
       </div>
     `);
@@ -348,8 +423,8 @@ async function openDetails(opportunityId) {
 function closeDetails() {
   const drawer = document.getElementById('drawer');
   const drawerBackdrop = document.getElementById('drawerBackdrop');
-  if (drawer) drawer.classList.remove('open');
-  if (drawerBackdrop) drawerBackdrop.classList.remove('open');
+  if (drawer) drawer.classList.remove('active', 'open');
+  if (drawerBackdrop) drawerBackdrop.classList.remove('active', 'open');
 }
 
 function showToast(message) {

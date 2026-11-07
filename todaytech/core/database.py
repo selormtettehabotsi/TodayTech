@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    or_,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -69,6 +70,7 @@ class OpportunityRow(Base):
     verified_on: Mapped[date | None] = mapped_column(nullable=True, default=None)
     fetched_on: Mapped[date | None] = mapped_column(nullable=True, default=None)
     days_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    dedupe_key: Mapped[str] = mapped_column(String(256), index=True, default="")
 
     fit_score: Mapped[int] = mapped_column(Integer, default=0)
     fit_reason: Mapped[str] = mapped_column(Text, default="")
@@ -189,12 +191,151 @@ def _migrate_schema(connection) -> None:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN fetched_on DATE")
     if "days_remaining" not in columns:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN days_remaining INTEGER")
+    if "dedupe_key" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN dedupe_key VARCHAR(256) DEFAULT ''"
+        )
 
     for stmt in alter_statements:
         try:
             connection.execute(text(stmt))
         except Exception as exc:
             log.warning("database.migration_column_error", stmt=stmt, error=str(exc))
+
+    # Task 3: Remove existing roundup and listicle entries from the database
+    from todaytech.core.dedupe import (
+        compute_dedupe_key,
+        opportunity_rank,
+    )
+    from todaytech.core.roundup_filter import is_roundup_or_directory
+
+    try:
+        res_all = connection.execute(
+            text(
+                "SELECT id, title, organizer, source_url, application_url, external_id FROM opportunities"
+            )
+        )
+        roundup_ids = []
+        for row in res_all.fetchall():
+            is_roundup, _ = is_roundup_or_directory(row[1], row[2], row[3], row[4])
+            if is_roundup:
+                roundup_ids.append(row[0])
+
+        if roundup_ids:
+            log.info("database.migration_purging_roundups", count=len(roundup_ids))
+            for i in range(0, len(roundup_ids), 200):
+                chunk = roundup_ids[i : i + 200]
+                placeholders = ",".join(str(cid) for cid in chunk)
+                connection.execute(text(f"DELETE FROM opportunities WHERE id IN ({placeholders})"))
+    except Exception as exc:
+        log.warning("database.migration_roundup_purge_error", error=str(exc))
+
+    # Task 4: Populate dedupe_key on existing rows
+    try:
+        res_need_key = connection.execute(
+            text(
+                "SELECT id, title, organizer, cycle_year, source_url, application_url FROM opportunities WHERE dedupe_key IS NULL OR dedupe_key = ''"
+            )
+        )
+        for row in res_need_key.fetchall():
+            dkey = compute_dedupe_key(row[1], row[2], row[3], row[4], row[5])
+            connection.execute(
+                text("UPDATE opportunities SET dedupe_key = :dk WHERE id = :id"),
+                {"dk": dkey, "id": row[0]},
+            )
+    except Exception as exc:
+        log.warning("database.migration_dedupe_key_error", error=str(exc))
+
+    # Task 4: Dedupe existing rows against each other before applying unique index
+    try:
+        # Group by dedupe_key
+        res_groups = connection.execute(
+            text(
+                "SELECT dedupe_key, COUNT(*) as cnt FROM opportunities WHERE dedupe_key != '' GROUP BY dedupe_key HAVING cnt > 1"
+            )
+        )
+        dup_keys = [r[0] for r in res_groups.fetchall()]
+        for dk in dup_keys:
+            rows_res = connection.execute(
+                text(
+                    "SELECT id, external_id, date_status, source_url, verified_on, fit_score, organizer, title, reward, location, application_url, estimated_window FROM opportunities WHERE dedupe_key = :dk"
+                ),
+                {"dk": dk},
+            )
+            items = rows_res.fetchall()
+            if len(items) <= 1:
+                continue
+
+            # Pick winner by opportunity_rank
+            class _MockOpp:
+                def __init__(self, r):
+                    self.id = r[0]
+                    self.external_id = r[1]
+                    self.date_status = r[2]
+                    self.source_url = r[3]
+                    self.verified_on = r[4]
+                    self.fit_score = r[5]
+                    self.organizer = r[6]
+                    self.title = r[7]
+                    self.reward = r[8]
+                    self.location = r[9]
+                    self.application_url = r[10]
+                    self.estimated_window = r[11]
+
+            sorted_items = sorted(
+                items, key=lambda it: opportunity_rank(_MockOpp(it)), reverse=True
+            )
+            winner = sorted_items[0]
+            losers = sorted_items[1:]
+
+            # Merge loser details into winner if winner lacks them
+            update_fields = {}
+            if not winner[8]:  # reward
+                for loser in losers:
+                    if loser[8]:
+                        update_fields["reward"] = loser[8]
+                        break
+            if not winner[9]:  # location
+                for loser in losers:
+                    if loser[9]:
+                        update_fields["location"] = loser[9]
+                        break
+            if not winner[10]:  # application_url
+                for loser in losers:
+                    if loser[10]:
+                        update_fields["application_url"] = loser[10]
+                        break
+
+            if update_fields:
+                set_clauses = ", ".join(f"{k} = :{k}" for k in update_fields)
+                update_fields["wid"] = winner[0]
+                connection.execute(
+                    text(f"UPDATE opportunities SET {set_clauses} WHERE id = :wid"),
+                    update_fields,
+                )
+
+            # Re-link any user_state from loser external_ids to winner external_id
+            for loser in losers:
+                connection.execute(
+                    text("UPDATE user_state SET opportunity_id = :wid WHERE opportunity_id = :lid"),
+                    {"wid": winner[1], "lid": loser[1]},
+                )
+
+            # Delete loser rows
+            loser_ids = ",".join(str(loser[0]) for loser in losers)
+            connection.execute(text(f"DELETE FROM opportunities WHERE id IN ({loser_ids})"))
+    except Exception as exc:
+        log.warning("database.migration_dedupe_merge_error", error=str(exc))
+
+    # Task 4: Unique index on dedupe_key column
+    try:
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_opportunities_dedupe_key ON opportunities(dedupe_key)"
+            )
+        )
+    except Exception as exc:
+        log.warning("database.migration_unique_index_error", error=str(exc))
 
     # Task 1: Set every existing row to "unknown" until it is re-verified
     try:
@@ -241,29 +382,108 @@ def get_session() -> AsyncSession:
 # ---------------------------------------------------------------------------
 
 
-async def upsert_opportunity(session: AsyncSession, data: dict) -> tuple[OpportunityRow, bool]:
-    """Insert or update an opportunity.  Returns (row, is_new)."""
+async def upsert_opportunity(
+    session: AsyncSession, data: dict
+) -> tuple[OpportunityRow | None, bool]:
+    """Insert or update an opportunity with cross-database deduplication and roundup rejection.
+
+    Returns (row, is_new).
+    """
     import json
 
+    from todaytech.core.dedupe import (
+        canonicalize_url,
+        compute_dedupe_key,
+        merge_two_opportunity_records,
+        opportunity_rank,
+    )
+    from todaytech.core.roundup_filter import is_roundup_or_directory
+
+    # Task 3: Reject roundup/listicle pages
+    is_roundup, reason = is_roundup_or_directory(
+        data.get("title", ""),
+        data.get("organizer", ""),
+        data.get("source_url", ""),
+        data.get("application_url", ""),
+    )
+    if is_roundup:
+        log.info("database.upsert_dropped_roundup", title=data.get("title"), reason=reason)
+        return None, False
+
+    data = dict(data)
     if isinstance(data.get("countries_allowed"), list):
-        data = dict(data)
         data["countries_allowed"] = json.dumps(data["countries_allowed"])
 
-    ext_id = data.get("external_id", "")
-    stmt = select(OpportunityRow).where(OpportunityRow.external_id == ext_id)
-    result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
+    # Normalise URLs
+    src_url = canonicalize_url(data.get("source_url", ""))
+    app_url = canonicalize_url(data.get("application_url", ""))
+    data["source_url"] = src_url
+    data["application_url"] = app_url
 
-    if row is None:
+    # Task 4: Dedupe key
+    dedupe_key = data.get("dedupe_key")
+    if not dedupe_key:
+        dedupe_key = compute_dedupe_key(
+            title=data.get("title", ""),
+            organizer=data.get("organizer", ""),
+            cycle_year=data.get("cycle_year"),
+            source_url=src_url,
+            application_url=app_url,
+        )
+    data["dedupe_key"] = dedupe_key
+
+    ext_id = data.get("external_id", "")
+
+    # Query for duplicate matches in database
+    conditions = [OpportunityRow.dedupe_key == dedupe_key]
+    if ext_id:
+        conditions.append(OpportunityRow.external_id == ext_id)
+    if src_url:
+        conditions.append(OpportunityRow.source_url == src_url)
+    if app_url:
+        conditions.append(OpportunityRow.application_url == app_url)
+
+    stmt = select(OpportunityRow).where(or_(*conditions))
+    result = await session.execute(stmt)
+    existing_rows = list(result.scalars().all())
+
+    if not existing_rows:
         row = OpportunityRow(**data)
         session.add(row)
         await session.flush()
         return row, True
 
-    # Update existing
-    for key, value in data.items():
-        if key != "id" and key != "first_seen":
-            setattr(row, key, value)
+    # Existing row found — compare precedence
+    row = existing_rows[0]
+
+    incoming_rank = opportunity_rank(data)
+    existing_rank = opportunity_rank(row)
+
+    if incoming_rank >= existing_rank:
+        # Incoming wins: merge existing fields into incoming
+        winner_data = merge_two_opportunity_records(
+            data,
+            {
+                "reward": row.reward,
+                "location": row.location,
+                "application_url": row.application_url,
+                "source_url": row.source_url,
+                "estimated_window": row.estimated_window,
+            },
+        )
+        for key, value in winner_data.items():
+            if key != "id" and key != "first_seen":
+                setattr(row, key, value)
+    else:
+        # Existing wins: merge incoming non-empty fields into existing
+        if not row.reward and data.get("reward"):
+            row.reward = data["reward"]
+        if not row.location and data.get("location"):
+            row.location = data["location"]
+        if not row.application_url and data.get("application_url"):
+            row.application_url = data["application_url"]
+
+    row.last_seen = func.now()
     await session.flush()
     return row, False
 

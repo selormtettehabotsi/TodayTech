@@ -195,6 +195,7 @@ async def test_public_api_never_exposes_private_fields():
             "estimated_window",
             "days_left",
             "verified_on",
+            "date_evidence",
             "source_url",
             "apply_url",
             "match_percentage",
@@ -347,3 +348,109 @@ async def test_search_and_timeframe_filters():
             res = await client.get("/api/opportunities", params={"timeframe": tf})
             assert res.status_code == 200
             assert isinstance(res.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_details_modal_markup_and_event_delegation():
+    """Requirement Task 1: Verify Details modal structure, event delegation wiring,
+
+    CSP compliance (no inline event handlers), and DOMPurify sanitization.
+    """
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/")
+        assert res.status_code == 200
+        html = res.text
+
+        # Modal elements
+        assert 'id="drawer"' in html
+        assert 'id="drawerBackdrop"' in html
+        assert 'id="drawerClose"' in html
+        assert 'id="drawerContent"' in html
+        assert "purify.min.js" in html
+
+        # Verify no inline event handlers in index.html
+        assert "onclick=" not in html.lower()
+        assert "onload=" not in html.lower()
+
+        # Fetch dashboard.js
+        res_js = await client.get("/static/js/dashboard.js")
+        assert res_js.status_code == 200
+        js_code = res_js.text
+
+        # Verify event delegation with data-action="details"
+        assert 'data-action="details"' in js_code
+        assert "closest('[data-action=\"details\"]')" in js_code
+        # Verify DOMPurify is used
+        assert "DOMPurify.sanitize" in js_code
+        # Verify drawer active/open toggle
+        assert "drawer.classList.add('active', 'open')" in js_code
+        assert "Escape" in js_code
+        # Verify clear message for missing/broken source URL
+        assert "source-missing-notice" in js_code
+        assert "Official source link is not published" in js_code
+
+
+@pytest.mark.asyncio
+async def test_details_api_handles_missing_or_empty_source_url(monkeypatch):
+    """Requirement Task 1: When source_url is missing or broken, API returns clean defaults
+
+    and dashboard handles it without failing silently.
+    """
+    from datetime import date
+
+    from todaytech.core.database import upsert_opportunity
+
+    test_item = {
+        "external_id": "test_no_source_001",
+        "title": "Local Community Hackathon",
+        "type": "hackathon",
+        "organizer": "Local Hub",
+        "date_status": "confirmed",
+        "deadline": date(2027, 5, 10),
+        "cycle_year": 2027,
+        "date_evidence": "Announced on flyer at tech hub",
+        "source_url": "",
+        "application_url": "",
+        "reward": "$5,000",
+        "location": "Accra, Ghana",
+        "field_required": "Software Engineering",
+        "fit_score": 88,
+    }
+
+    async with get_session() as session:
+        await upsert_opportunity(session, test_item)
+        await session.commit()
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/api/opportunity/test_no_source_001")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["title"] == "Local Community Hackathon"
+        assert data["source_url"] == ""
+        assert data["apply_url"] == ""
+        assert data["date_evidence"] == "Announced on flyer at tech hub"
+        assert data["date_status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_card_layout_spacing_and_badges_styles():
+    """Requirement Task 2: Verify CSS definitions for card status cluster, badges, and responsive spacing."""
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res_css = await client.get("/static/css/dashboard.css")
+        assert res_css.status_code == 200
+        css = res_css.text
+
+        assert ".card-status-badges" in css
+        assert ".badge-urgent" in css
+        assert ".badge-standard" in css
+        assert ".score-badge" in css or ".badge-score" in css
+        # Check drawer active and open classes
+        assert ".drawer.active" in css
+        assert ".drawer.open" in css
+        assert ".drawer-backdrop.open" in css
