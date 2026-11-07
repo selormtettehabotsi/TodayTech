@@ -83,7 +83,13 @@ async def _call_gemini_grounded(
     Returns:
         (text, is_grounded, failure_reason)
     """
-    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
+    models = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+    ]
     last_err: Exception | None = None
     is_quota = False
 
@@ -159,7 +165,13 @@ async def _call_gemini(
     enable_grounding: bool = False,
 ) -> str:
     """Call Google Gemini API with automatic model fallback and optional Google Search grounding."""
-    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
+    models = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-3.7-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+    ]
     last_err = None
 
     for model in models:

@@ -48,3 +48,4 @@ async def send_telegram_alert(message: str, settings: Any = None) -> bool:
     except Exception as exc:
         log.warning("alerts.telegram_send_failed", error=str(exc))
         return False
+

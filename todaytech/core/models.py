@@ -171,6 +171,24 @@ class Opportunity(BaseModel):
     source_url: str = ""
     confidence: float = 0.0  # 0-1 extraction confidence
 
+    @field_validator("countries_allowed", mode="before")
+    @classmethod
+    def _coerce_countries_allowed(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return [str(item) for item in v]
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    import json
+                    parsed = json.loads(v_str)
+                    if isinstance(parsed, list):
+                        return [str(item) for item in parsed]
+                except Exception:
+                    pass
+            return [c.strip() for c in v_str.split(",") if c.strip()]
+        return ["all"]
+
     # Verification & Date Confidence fields
     date_status: DateStatus = DateStatus.UNKNOWN
     estimated_window: str | None = None
