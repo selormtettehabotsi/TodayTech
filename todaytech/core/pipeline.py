@@ -15,7 +15,7 @@ from typing import Any, Sequence
 import httpx
 import structlog
 from bs4 import BeautifulSoup
-from thefuzz import fuzz
+from thefuzz import fuzz  # type: ignore[import-untyped]
 
 from todaytech.collectors import get_all_collectors
 from todaytech.core.alerts import send_telegram_alert
@@ -29,6 +29,7 @@ from todaytech.core.database import (
 from todaytech.core.dedupe import (
     canonicalize_url,
     compute_dedupe_key,
+    is_official_domain,
 )
 from todaytech.core.eligibility import check_eligibility, rule_check
 from todaytech.core.llm import LLMClient, create_llm_client_from_settings
@@ -39,6 +40,7 @@ from todaytech.core.models import (
     OpportunityType,
     UserProfile,
 )
+from todaytech.core.partner_programs import validate_partner_program
 from todaytech.core.roundup_filter import is_roundup_or_directory
 from todaytech.core.scam_filter import check_scam
 from todaytech.core.scoring import compute_fit_score
@@ -648,11 +650,48 @@ async def validate_opportunity_batch(
             log.info("validation.dropped_roundup_page", title=opp.title, reason=roundup_reason)
             continue
 
+        # Task 5: Partner-run programmes (e.g. Mastercard Foundation Scholars)
+        # Require specific partner institution, that institution's official page,
+        # and eligibility for Ghanaian undergraduate; otherwise exclude.
+        is_partner_valid, partner_reason = validate_partner_program(
+            opp.title,
+            opp.organizer,
+            opp.source_url,
+            opp.application_url,
+            opp.level_required,
+        )
+        if not is_partner_valid:
+            log.info("validation.dropped_partner_program", title=opp.title, reason=partner_reason)
+            continue
+
         # 1. Drop items with no source_url
         src_url = str(opp.source_url or "").strip()
         if not src_url or src_url.lower() in ("none", "null", "n/a", "undefined", "#"):
             log.info("validation.dropped_missing_source_url", title=opp.title)
             continue
+
+        # Task 1: Official-source gate
+        # An item may appear only if its source_url is the organiser's official page.
+        # Treat aggregator/blog/social/directory pages as leads only: if source_url is on a
+        # non-official domain, but application_url is official, promote application_url to source_url.
+        # If neither is official, the item is dropped.
+        if not is_official_domain(opp.source_url, opp.organizer):
+            if opp.application_url and is_official_domain(opp.application_url, opp.organizer):
+                log.info(
+                    "validation.promoted_official_apply_url",
+                    title=opp.title,
+                    old_source=opp.source_url,
+                    new_source=opp.application_url,
+                )
+                opp.source_url = opp.application_url
+            else:
+                log.info(
+                    "validation.dropped_non_official_source",
+                    title=opp.title,
+                    source_url=opp.source_url,
+                    organizer=opp.organizer,
+                )
+                continue
 
         # Task 4: Deduplicate by canonical dedupe key or canonical apply/source URL
         dkey = compute_dedupe_key(
@@ -1189,6 +1228,7 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
 
     verified_on_val = _parse_date(data.get("verified_on"))
     fetched_on_val = _parse_date(data.get("fetched_on"))
+    prev_cycle_date_val = _parse_date(data.get("prev_cycle_date"))
     raw_cycle = data.get("cycle_year")
     cycle_year_val = None
     if raw_cycle is not None:
@@ -1216,6 +1256,8 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         confidence=float(data.get("confidence", 0.5) or 0.5),
         date_status=date_status,
         estimated_window=data.get("estimated_window"),
+        prev_cycle_date=prev_cycle_date_val,
+        prev_cycle_source=data.get("prev_cycle_source") or "",
         cycle_year=cycle_year_val,
         date_evidence=data.get("date_evidence") or "",
         conflict=bool(data.get("conflict", False)),
@@ -1252,6 +1294,8 @@ def _opportunity_to_row_dict(opp: Opportunity, external_id: str) -> dict[str, An
         if hasattr(opp.date_status, "value")
         else str(opp.date_status or "unknown"),
         "estimated_window": opp.estimated_window,
+        "prev_cycle_date": opp.prev_cycle_date,
+        "prev_cycle_source": opp.prev_cycle_source or "",
         "cycle_year": opp.cycle_year,
         "date_evidence": opp.date_evidence,
         "conflict": opp.conflict,

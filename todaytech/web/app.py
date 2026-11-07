@@ -28,6 +28,7 @@ from todaytech.core.database import (
     get_session,
     init_db,
 )
+from todaytech.core.dedupe import is_official_domain, is_valid_estimated_opportunity
 from todaytech.web.rate_limit import get_client_ip, rate_limiter
 
 log = structlog.get_logger()
@@ -116,6 +117,7 @@ def _serialize_public_opportunity(opp: OpportunityRow, today: date) -> dict[str,
         else None
     )
 
+    prev_cycle_val = getattr(opp, "prev_cycle_date", None)
     return {
         "id": opp.external_id,
         "title": opp.title,
@@ -131,6 +133,8 @@ def _serialize_public_opportunity(opp: OpportunityRow, today: date) -> dict[str,
             else None
         ),
         "estimated_window": opp.estimated_window,
+        "prev_cycle_date": prev_cycle_val.isoformat() if prev_cycle_val is not None else None,
+        "prev_cycle_source": getattr(opp, "prev_cycle_source", "") or "",
         "days_left": days_left,
         "verified_on": opp.verified_on.isoformat() if opp.verified_on else None,
         "date_evidence": opp.date_evidence or "",
@@ -275,6 +279,7 @@ def create_app() -> FastAPI:
             1
             for o in opps
             if not o.is_scam
+            and not (o.source_url and not is_official_domain(o.source_url, o.organizer))
             and o.date_status == "confirmed"
             and (not o.deadline or o.deadline >= today)
         )
@@ -282,6 +287,7 @@ def create_app() -> FastAPI:
             1
             for o in opps
             if not o.is_scam
+            and not (o.source_url and not is_official_domain(o.source_url, o.organizer))
             and o.date_status == "confirmed"
             and o.deadline
             and (o.deadline - today) <= timedelta(days=7)
@@ -327,6 +333,14 @@ def create_app() -> FastAPI:
         results: list[dict[str, Any]] = []
         for opp in opps:
             if opp.is_scam:
+                continue
+
+            # Task 1: Official-source gate (reject aggregator, social, and directory domains)
+            if opp.source_url and not is_official_domain(opp.source_url, opp.organizer):
+                continue
+
+            # Task 4: Tighten estimated items (require official page and previous cycle evidence)
+            if opp.date_status == "estimated" and not is_valid_estimated_opportunity(opp):
                 continue
 
             # Drop items with past confirmed deadline
@@ -398,7 +412,11 @@ def create_app() -> FastAPI:
         today = datetime.now(timezone.utc).date()
         async with get_session() as session:
             opp = await get_opportunity_by_id(session, external_id)
-            if not opp or opp.is_scam:
+            if (
+                not opp
+                or opp.is_scam
+                or (opp.source_url and not is_official_domain(opp.source_url, opp.organizer))
+            ):
                 raise HTTPException(status_code=404, detail="Opportunity not found")
 
         return _serialize_public_opportunity(opp, today)

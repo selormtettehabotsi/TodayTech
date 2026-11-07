@@ -27,6 +27,7 @@ from todaytech.core.database import (
     get_session,
     set_user_state,
 )
+from todaytech.core.dedupe import is_official_domain, is_valid_estimated_opportunity
 from todaytech.core.digest import format_digest
 from todaytech.core.pipeline import run_scan
 from todaytech.scheduler.jobs import setup_scheduler
@@ -163,7 +164,10 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         # Fetch and format digest
         async with get_session() as session:
-            opportunities = await get_opportunities(session, limit=50)
+            opportunities = await get_opportunities(session, limit=100)
+            opportunities = [
+                o for o in opportunities if is_official_domain(o.source_url, o.organizer)
+            ]
 
         digest = format_digest(
             opportunities,
@@ -217,7 +221,10 @@ async def cmd_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     async with get_session() as session:
-        opportunities = await get_opportunities(session, type_filter=opp_type, limit=20)
+        opportunities = await get_opportunities(session, type_filter=opp_type, limit=50)
+        opportunities = [o for o in opportunities if is_official_domain(o.source_url, o.organizer)][
+            :20
+        ]
 
     if not opportunities:
         await update.message.reply_text(f"📭 No {opp_type}s found. Try running `update me` first.")
@@ -248,9 +255,10 @@ async def cmd_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         result = await session.execute(stmt)
         opp = result.scalars().first()
 
-    if not opp:
+    if not opp or not is_official_domain(opp.source_url, opp.organizer):
         await update.message.reply_text(
-            f"❌ Opportunity `{opp_id}` not found.", parse_mode="Markdown"
+            f"❌ Opportunity `{opp_id}` not found or was excluded by official source policy.",
+            parse_mode="Markdown",
         )
         return
 
@@ -334,10 +342,12 @@ async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 OpportunityRow.date_status == "confirmed",
             )
             .order_by(OpportunityRow.deadline.asc())
-            .limit(20)
+            .limit(50)
         )
         result = await session.execute(stmt)
-        opps = list(result.scalars().all())
+        opps = [o for o in result.scalars().all() if is_official_domain(o.source_url, o.organizer)][
+            :20
+        ]
 
     if not opps:
         await update.message.reply_text(
@@ -359,40 +369,51 @@ async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @auth_required
 async def cmd_estimated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle '/estimated' — list opportunities whose dates are not yet published."""
-    from sqlalchemy import or_, select
+    """Handle '/estimated' — list opportunities whose dates are not yet published.
+
+    Task 4: Show an item as estimated only if the official page exists and there is
+    evidence of a previous cycle. Items with only 'Expected window TBA' and no evidence
+    must not be shown.
+    """
+    from sqlalchemy import select
 
     from todaytech.core.database import OpportunityRow
 
     async with get_session() as session:
         stmt = (
             select(OpportunityRow)
-            .where(
-                or_(
-                    OpportunityRow.date_status == "estimated",
-                    OpportunityRow.date_status == "unknown",
-                )
-            )
+            .where(OpportunityRow.date_status == "estimated")
             .order_by(OpportunityRow.fit_score.desc())
-            .limit(20)
+            .limit(50)
         )
         result = await session.execute(stmt)
-        opps = list(result.scalars().all())
+        opps = [o for o in result.scalars().all() if is_valid_estimated_opportunity(o)][:20]
 
     if not opps:
-        await update.message.reply_text("📭 No estimated or pending opportunities found.")
+        await update.message.reply_text(
+            "📭 No estimated opportunities with previous cycle evidence found."
+        )
         return
 
     lines = [
-        "⏳ **Estimated / Projected Opportunities**\nOfficial current-cycle dates are not yet published:\n"
+        "⏳ **Estimated / Projected Opportunities**\n"
+        "Official current-cycle dates are not yet published:\n"
     ]
     for opp in opps:
-        status_label = (opp.date_status or "unknown").upper()
-        window = opp.estimated_window or "Expected window TBA"
+        status_label = (opp.date_status or "estimated").upper()
+        window = opp.estimated_window or "Previous cycle projection"
+        evidence_lines = []
+        if opp.prev_cycle_date:
+            evidence_lines.append(f"Prev Cycle Date: `{opp.prev_cycle_date}`")
+        if opp.prev_cycle_source:
+            evidence_lines.append(f"Prev Cycle Source: {opp.prev_cycle_source}")
+        ev_str = f"  Evidence: {', '.join(evidence_lines)}\n" if evidence_lines else ""
+
         lines.append(
             f"• **{opp.title}** `[{status_label}]`\n"
             f"  Window: {window}\n"
-            f"  Source: {opp.source_url or 'None'}\n"
+            f"{ev_str}"
+            f"  Official Source: {opp.source_url or 'None'}\n"
             f"  ID: `{opp.external_id[:8]}`\n"
         )
     lines.append("💡 Use `/details <id>` to view full verification details.")

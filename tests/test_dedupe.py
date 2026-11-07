@@ -73,6 +73,29 @@ class TestDedupeKeyMatching:
         u2 = canonicalize_url("http://www.summerofcode.withgoogle.com?utm_source=twitter")
         assert u1 == u2
 
+    def test_blank_or_generic_organizer_kept_separate(self):
+        """Task 3: Never merge items whose organiser is blank or generic.
+
+        If missing, derive it from the official domain; if impossible, do not merge.
+        Assert that 'Campus Ambassador Program' at cap.giftoflife.org and
+        'Campus Ambassador Program 2026' at launchedglobal.in are kept separate.
+        """
+        key_official = compute_dedupe_key(
+            title="Campus Ambassador Program",
+            organizer="",  # Blank organizer
+            cycle_year=2026,
+            source_url="https://cap.giftoflife.org",
+        )
+        key_aggregator = compute_dedupe_key(
+            title="Campus Ambassador Program 2026",
+            organizer="",  # Blank organizer
+            cycle_year=2026,
+            source_url="https://launchedglobal.in/campus-ambassador",
+        )
+        assert key_official != key_aggregator
+        assert "giftoflife" in key_official
+        assert "launchedglobal" not in key_official
+
 
 class TestPrecedenceMerging:
     def test_prefers_confirmed_over_estimated_and_unknown(self):
@@ -119,6 +142,49 @@ class TestPrecedenceMerging:
         opp_older = Opp(date(2026, 10, 1))
         assert opportunity_rank(opp_newer) > opportunity_rank(opp_older)
 
+    def test_merge_two_opportunity_records_official_url_rules(self):
+        """Task 3: Never let a non-official URL replace an official one when merging;
+
+        if no merged record has an official URL, drop the item.
+        """
+        from todaytech.core.dedupe import merge_two_opportunity_records
+
+        official_rec = {
+            "title": "Internship",
+            "organizer": "AmaliTech",
+            "source_url": "https://amalitech.com/internship",
+            "application_url": "https://amalitech.com/apply",
+            "reward": "Stipend",
+        }
+        aggregator_rec = {
+            "title": "Internship",
+            "organizer": "AmaliTech",
+            "source_url": "https://linkedin.com/posts/activity-123",
+            "application_url": "",
+            "location": "Accra, Ghana",
+        }
+
+        # Winner is official, loser is aggregator -> official URL preserved
+        merged1 = merge_two_opportunity_records(official_rec, aggregator_rec)
+        assert merged1 is not None
+        assert merged1["source_url"] == "https://amalitech.com/internship"
+        assert merged1["location"] == "Accra, Ghana"
+
+        # Winner is aggregator, loser is official -> loser's official URL replaces aggregator
+        merged2 = merge_two_opportunity_records(aggregator_rec, official_rec)
+        assert merged2 is not None
+        assert merged2["source_url"] == "https://amalitech.com/internship"
+
+        # Neither has official URL -> item dropped (returns None)
+        aggregator_rec2 = {
+            "title": "Internship",
+            "organizer": "Unknown",
+            "source_url": "https://devpost.com/hackathons/1",
+            "application_url": "https://devpost.com/apply",
+        }
+        dropped = merge_two_opportunity_records(aggregator_rec, aggregator_rec2)
+        assert dropped is None
+
 
 class TestRoundupRejection:
     """Requirement Task 3: Reject listicles, directories, finders, and multi-organiser roundups."""
@@ -139,6 +205,23 @@ class TestRoundupRejection:
         for title in roundup_titles:
             is_roundup, reason = is_roundup_or_directory(title)
             assert is_roundup is True, f"Failed to reject roundup: '{title}'"
+            assert len(reason) > 0
+
+    def test_rejects_extended_roundups_and_curated_repos(self):
+        """Task 2: Reject titles with number + fully funded/best/top/scholarships,
+
+        curated lists, finders, directories, degree programs, Fully Funded for nationality students,
+        and GitHub repository names.
+        """
+        exact_required_titles = [
+            "104 Fully Funded Computer Science scholarships for ghanaian students in canada",
+            "Fully Funded Scholarships for Ghana Students 2027-2028",
+            "Julian048/CS-Everything-but-Internships (Curated List of CS Programs & Fellowships)",
+            "2027 Online Computer Science Bachelor's Degree Programs with Monthly Start Dates",
+        ]
+        for title in exact_required_titles:
+            is_roundup, reason = is_roundup_or_directory(title)
+            assert is_roundup is True, f"Failed to reject exact required title: '{title}'"
             assert len(reason) > 0
 
     def test_allows_single_programme_opportunities(self):

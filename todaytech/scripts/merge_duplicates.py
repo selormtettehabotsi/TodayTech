@@ -75,31 +75,56 @@ def run_merge_duplicates(db_path: str) -> dict:
         con.close()
         return report
 
-    # 2. Add dedupe_key column if missing
+    # 2. Add any missing columns to schema
     cur.execute("PRAGMA table_info(opportunities)")
     columns = [col[1] for col in cur.fetchall()]
-    if "dedupe_key" not in columns:
-        cur.execute("ALTER TABLE opportunities ADD COLUMN dedupe_key VARCHAR(256) DEFAULT ''")
-        con.commit()
+    schema_additions = [
+        ("dedupe_key", "VARCHAR(256) DEFAULT ''"),
+        ("date_status", "VARCHAR(32) DEFAULT 'unknown'"),
+        ("estimated_window", "VARCHAR(256)"),
+        ("cycle_year", "INTEGER"),
+        ("date_evidence", "TEXT"),
+        ("conflict", "BOOLEAN DEFAULT 0"),
+        ("verified_on", "DATE"),
+        ("fetched_on", "DATE"),
+        ("days_remaining", "INTEGER"),
+        ("level_required", "VARCHAR(64) DEFAULT ''"),
+    ]
+    for col_name, col_def in schema_additions:
+        if col_name not in columns:
+            try:
+                cur.execute(f"ALTER TABLE opportunities ADD COLUMN {col_name} {col_def}")
+            except Exception:
+                pass
+    con.commit()
 
     cur.execute("SELECT COUNT(*) FROM opportunities")
     report["initial_total"] = cur.fetchone()[0]
 
-    # 3. Purge roundup and listicle entries (Task 3)
+    # 3. Purge roundup/listicle entries (Task 3) and unanchored partner programmes (Task 5)
+    from todaytech.core.partner_programs import validate_partner_program
+
     cur.execute(
-        "SELECT id, title, organizer, source_url, application_url, external_id FROM opportunities"
+        "SELECT id, title, organizer, source_url, application_url, external_id, level_required FROM opportunities"
     )
     all_rows = cur.fetchall()
-    roundup_ids = []
+    purge_ids = []
     for r in all_rows:
         is_roundup, reason = is_roundup_or_directory(r[1], r[2], r[3], r[4])
         if is_roundup:
-            roundup_ids.append(r[0])
+            purge_ids.append(r[0])
+            continue
+        level_req = r[6] if len(r) > 6 and r[6] else ""
+        is_partner_valid, reason = validate_partner_program(
+            r[1], r[2], r[3], r[4], level_required=level_req
+        )
+        if not is_partner_valid:
+            purge_ids.append(r[0])
 
-    if roundup_ids:
-        report["roundups_removed"] = len(roundup_ids)
-        for i in range(0, len(roundup_ids), 200):
-            chunk = roundup_ids[i : i + 200]
+    if purge_ids:
+        report["roundups_removed"] = len(purge_ids)
+        for i in range(0, len(purge_ids), 200):
+            chunk = purge_ids[i : i + 200]
             placeholders = ",".join(str(cid) for cid in chunk)
             cur.execute(f"DELETE FROM opportunities WHERE id IN ({placeholders})")
         con.commit()
@@ -187,11 +212,41 @@ def run_merge_duplicates(db_path: str) -> dict:
                 if loser[11]:
                     updates["application_url"] = loser[11]
                     break
-        if not is_official_domain(winner_src_url):
+        # Check official URL precedence: never let non-official replace official!
+        winner_src = updates.get("source_url", winner_src_url)
+        winner_org = winner[3]
+        winner_app = updates.get("application_url", winner_app_url)
+
+        if not is_official_domain(winner_src, winner_org):
+            found_official = False
             for loser in losers:
-                if is_official_domain(loser[6]):
+                if is_official_domain(loser[6], loser[3]):
                     updates["source_url"] = loser[6]
+                    winner_src = loser[6]
+                    found_official = True
                     break
+            if not found_official:
+                if is_official_domain(winner_app, winner_org):
+                    updates["source_url"] = winner_app
+                    winner_src = winner_app
+                    found_official = True
+                else:
+                    for loser in losers:
+                        if is_official_domain(loser[11], loser[3]):
+                            updates["source_url"] = loser[11]
+                            winner_src = loser[11]
+                            found_official = True
+                            break
+            if not found_official:
+                # No merged record has an official URL -> drop the item entirely!
+                all_ids = [winner_id] + [loser[0] for loser in losers]
+                placeholders = ",".join(str(cid) for cid in all_ids)
+                cur.execute(f"DELETE FROM opportunities WHERE id IN ({placeholders})")
+                report["dropped_no_official_url"] = report.get("dropped_no_official_url", 0) + len(
+                    all_ids
+                )
+                continue
+
         if not winner_est_window:
             for loser in losers:
                 if loser[12]:
@@ -233,7 +288,31 @@ def run_merge_duplicates(db_path: str) -> dict:
 
     con.commit()
 
-    # 6. Apply unique index
+    # 6. Purge non-official sources where no official source or apply URL exists (Task 1 & Task 3)
+    cur.execute("SELECT id, title, organizer, source_url, application_url FROM opportunities")
+    non_official_ids = []
+    for r in cur.fetchall():
+        row_id, title, org, src, app = r
+        clean_src = canonicalize_url(src)
+        clean_app = canonicalize_url(app)
+        if not is_official_domain(clean_src, org):
+            if is_official_domain(clean_app, org):
+                cur.execute(
+                    "UPDATE opportunities SET source_url = ? WHERE id = ?",
+                    (clean_app, row_id),
+                )
+            else:
+                non_official_ids.append(row_id)
+
+    if non_official_ids:
+        report["non_official_purged"] = len(non_official_ids)
+        for i in range(0, len(non_official_ids), 200):
+            chunk = non_official_ids[i : i + 200]
+            placeholders = ",".join(str(cid) for cid in chunk)
+            cur.execute(f"DELETE FROM opportunities WHERE id IN ({placeholders})")
+        con.commit()
+
+    # 7. Apply unique index
     cur.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_opportunities_dedupe_key ON opportunities(dedupe_key)"
     )
@@ -278,8 +357,10 @@ def main() -> None:
     print(f"Database:                  {report['db_path']}")
     print(f"Initial Opportunities:     {report['initial_total']}")
     print(f"Roundups/Listicles Purged: {report['roundups_removed']}")
+    print(f"Non-Official URLs Purged:  {report.get('non_official_purged', 0)}")
     print(f"Duplicate Groups Merged:   {report['duplicate_groups_merged']}")
     print(f"Duplicate Rows Removed:    {report['duplicates_removed']}")
+    print(f"Dropped (No Official URL): {report.get('dropped_no_official_url', 0)}")
     print(f"Final Opportunities Left:  {report['final_total']}")
     print("=" * 60)
 

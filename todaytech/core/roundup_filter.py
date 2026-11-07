@@ -16,18 +16,30 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 _ROUNDUP_TITLE_PATTERNS = [
-    # Listicles: "27 Scholarships for Computer Sciences in Ghana", "40 Best Internships...", "10 Top Hackathons", "75 Computer Science Scholarships"
+    # 1. Number at start followed by words like fully funded, best, top, or scholarships (case-insensitive)
+    r"^\d{1,4}\+?\s+(?:fully\s+funded|best|top|scholarships|internships|fellowships|grants|hackathons|opportunities|programs|programmes|colleges|universities|ways|tips)\b",
+    # 2. "Fully Funded ... for [nationality] students"
+    r"\bfully\s+funded\b.*?\bfor\s+[a-zA-Z\s]+\s+students\b",
+    # 3. Titles containing "curated list"
+    r"\bcurated\s+list\b",
+    # 4. Titles containing "finder"
+    r"\bfinder\b",
+    # 5. Titles containing "directory"
+    r"\bdirectory\b",
+    # 6. Titles containing "degree programs"
+    r"\bdegree\s+programs?\b",
+    # 7. GitHub repository names (e.g. owner/repo, Julian048/CS-Everything-but-Internships)
+    r"\b[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.]+\b",
+    # Listicles anywhere: "27 Scholarships for Computer Sciences in Ghana", "40 Best Internships...", "10 Top Hackathons", "75 Computer Science Scholarships"
     r"\b\d{1,3}\+?\s+(?:best|top|scholarships|internships|fellowships|grants|hackathons|opportunities|programs|programmes|colleges|universities|ways|tips)\b",
     # "Find 40 Best...", "Find 10 Top..."
     r"\bfind\s+\d{1,3}\+?\s+(?:best|top)\b",
     # "The Best Hackathons for...", "Best Computer Science Scholarships 2026", "Top Tech Internships"
     r"\b(?:the\s+)?(?:best|top)\s+(?:\d{1,3}\s+)?(?:computer science|tech|engineering|coding|stem|cloud|internships|scholarships|fellowships|hackathons|colleges|universities|programs|schools|undergraduate)\b",
-    # "Scholarship Finder", "Internship Directory", "Job Portal", "Scholarship Search"
-    r"\b(?:scholarship|internship|job|fellowship|grant|college)\s+(?:finder|search|directory|aggregator|portal|database)\b",
-    # "Directory of Internships, Research Opportunities, Scholarships & Fellowships"
-    r"\bdirectory\s+of\s+(?:internships|scholarships|fellowships|grants|opportunities)\b",
-    # "2027 List of Scholarships...", "Curated list of fellowships...", "Search results for..."
-    r"\b(?:(?:curated\s+)?list\s+of|search\s+results\s+for|browse\s+all)\s+(?:scholarships|internships|fellowships|hackathons|opportunities)\b",
+    # "Scholarship Search", "Job Portal"
+    r"\b(?:scholarship|internship|job|fellowship|grant|college)\s+(?:search|aggregator|portal|database)\b",
+    # "2027 List of Scholarships...", "Search results for..."
+    r"\b(?:list\s+of|search\s+results\s+for|browse\s+all)\s+(?:scholarships|internships|fellowships|hackathons|opportunities)\b",
     # "How to find hackathons..."
     r"\bhow\s+to\s+find\s+(?:hackathons|scholarships|internships|opportunities)\b",
     # "Conferences in USA 2026/2027"

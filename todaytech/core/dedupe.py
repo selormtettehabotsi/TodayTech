@@ -27,37 +27,96 @@ _TRACKING_QUERY_PARAMS = {
     "si",
 }
 
-# Domains that are social media or third-party aggregators rather than official organiser domains
+# Domains that are social media, blogs, job boards, or third-party aggregators/directories
+# rather than an organiser's official page.
 _NON_OFFICIAL_DOMAINS = {
-    "linkedin.com",
+    # Social media & messaging platforms
     "facebook.com",
+    "fb.com",
+    "linkedin.com",
     "instagram.com",
     "twitter.com",
     "x.com",
     "t.me",
-    "medium.com",
+    "telegram.me",
+    "telegram.org",
     "reddit.com",
     "youtube.com",
+    "tiktok.com",
+    "quora.com",
+    "pinterest.com",
+    # Aggregators, job/scholarship boards & lead directories
+    "devpost.com",
+    "dev.events",
+    "research.com",
+    "scholarshipsads.com",
+    "scholarshiptab.com",
+    "opportunitiesforafricans.com",
     "opportunitydesk.org",
     "oyaop.com",
+    "youthop.com",
+    "youthopportunitieshub.com",
     "youthhubmedia.com",
-    "opportunitiesforafricans.com",
     "youthhubafrica.org",
     "jobsearchgh.com",
     "builtin.com",
     "fastweb.com",
     "bold.org",
-    "scholarshiptab.com",
     "scholar.africa",
     "bachelorsportal.com",
     "mastersportal.com",
     "findmyorbit.com",
     "acceptedx.com",
-    "research.com",
     "ivyscholars.com",
     "sparkadmissions.com",
     "purdueglobal.edu",
     "lanterncollegecounseling.com",
+    "advance-africa.com",
+    "thescholarshipwhizz.org",
+    "launchedglobal.in",
+    "afterschoolafrica.com",
+    "scholars4dev.com",
+    "internships.com",
+    "chegg.com",
+    "indeed.com",
+    "glassdoor.com",
+    "ziprecruiter.com",
+    "handshake.com",
+    "untapped.io",
+    "wayup.com",
+    "unstop.com",
+    "hackerearth.com",
+    "eventbrite.com",
+    "meetup.com",
+    "scholarshipbob.com",
+    "scholarships.jobzhiring.com",
+    "scholarshipregion.com",
+    "globalscholarships.com",
+    "grabascholarship.com",
+    "indiatoday.in",
+    "scholarshipstory.com",
+    "wemakescholars.com",
+    "heysuccess.com",
+    "armacad.info",
+    "fundsforngos.org",
+    "opportunitiescircle.com",
+    "opportunitiescorner.com",
+    "fullyfundedaffairs.com",
+    # Blogs, newsletters & self-publishing platforms
+    "medium.com",
+    "substack.com",
+    "wordpress.com",
+    "blogspot.com",
+    "blogger.com",
+    "tumblr.com",
+    "hashnode.dev",
+    "dev.to",
+    "wixsite.com",
+    "weebly.com",
+    "notion.site",
+    "canva.site",
+    "site123.me",
+    "linktr.ee",
 }
 
 
@@ -114,24 +173,49 @@ def canonicalize_url(url: str | None) -> str:
 
 
 def is_official_domain(url: str | None, organizer: str = "") -> bool:
-    """Return True if url appears to be an official organiser domain rather than an aggregator."""
-    if not url:
+    """Return True if url appears to be an official organiser domain rather than an aggregator/blog/social site."""
+    if not url or not isinstance(url, str):
         return False
     norm_url = canonicalize_url(url)
+    if not norm_url:
+        return False
     try:
-        domain = urlparse(norm_url).netloc.lower()
+        parsed = urlparse(norm_url)
+        domain = (parsed.hostname or parsed.netloc or "").lower().split(":")[0]
     except Exception:
         return False
 
-    if any(non_off in domain for non_off in _NON_OFFICIAL_DOMAINS):
+    if not domain:
         return False
 
-    # If organizer is provided, check if part of organizer name is in the domain
-    if organizer:
-        clean_org = re.sub(r"[^\w]", "", organizer.lower())
-        domain_name = domain.split(".")[0]
-        if clean_org and (clean_org in domain or domain_name in clean_org):
+    # 1. Reject known non-official aggregator, blog, social media, and directory domains
+    for non_off in _NON_OFFICIAL_DOMAINS:
+        if domain == non_off or domain.endswith("." + non_off):
+            return False
+
+    # 2. GitHub: Only official GitHub domains (e.g. education.github.com) or official repos are accepted
+    if domain == "github.com" or domain.endswith(".github.com"):
+        if domain in ("education.github.com", "accelerator.github.com"):
             return True
+        clean_org = organizer.lower() if organizer else ""
+        if "github" in clean_org:
+            path = parsed.path.lower()
+            curated_markers = (
+                "curated",
+                "list",
+                "awesome",
+                "collection",
+                "directory",
+                "everything",
+                "programs",
+                "scholarships",
+                "internships",
+            )
+            if any(marker in path for marker in curated_markers):
+                return False
+            return True
+        # If GitHub is not the organiser, any repo is a third-party project or curated list
+        return False
 
     return True
 
@@ -190,6 +274,102 @@ _STOPWORDS = {
 }
 
 
+_GENERIC_ORGANIZERS = {
+    "",
+    "none",
+    "null",
+    "unknown",
+    "n/a",
+    "independent",
+    "various",
+    "multiple",
+    "other",
+    "campus",
+    "student",
+    "students",
+    "tech",
+    "internship",
+    "internships",
+    "hackathon",
+    "hackathons",
+    "scholarship",
+    "scholarships",
+    "fellowship",
+    "fellowships",
+    "ambassador",
+    "ambassadors",
+    "program",
+    "programme",
+    "programs",
+    "programmes",
+    "global",
+    "remote",
+    "online",
+    "annual",
+    "university",
+    "college",
+}
+
+
+def derive_organizer_from_official_domain(url: str | None) -> str:
+    """Derive clean organiser name from an official domain, or return '' if impossible.
+
+    Task 3: Never merge items whose organiser is blank or generic.
+    If missing, derive it from the official domain; if impossible, do not merge.
+    """
+    if not url or not is_official_domain(url):
+        return ""
+    try:
+        norm_url = canonicalize_url(url)
+        parsed = urlparse(norm_url)
+        hostname = (parsed.hostname or parsed.netloc or "").lower().split(":")[0]
+    except Exception:
+        return ""
+    if not hostname:
+        return ""
+
+    parts = hostname.split(".")
+    tlds = {
+        "org",
+        "com",
+        "edu",
+        "gov",
+        "io",
+        "net",
+        "in",
+        "gh",
+        "uk",
+        "ca",
+        "ai",
+        "co",
+        "de",
+        "fr",
+        "int",
+        "eu",
+        "info",
+        "biz",
+        "me",
+        "tech",
+    }
+    non_tld_parts = [p for p in parts if p not in tlds]
+    if not non_tld_parts:
+        return ""
+
+    # E.g. for cap.giftoflife.org -> non_tld_parts = ["cap", "giftoflife"] -> main is giftoflife
+    main_token = non_tld_parts[-1]
+    if main_token in _GENERIC_ORGANIZERS and len(non_tld_parts) > 1:
+        main_token = non_tld_parts[-2]
+
+    # Special handling for e.g. withgoogle -> google
+    if main_token.endswith("google"):
+        main_token = "google"
+
+    clean = re.sub(r"[^\w]", "", main_token.lower())
+    if clean and clean not in _GENERIC_ORGANIZERS and len(clean) >= 3:
+        return clean
+    return ""
+
+
 def normalize_words(text: str) -> list[str]:
     """Clean text and return significant alphanumeric words, ignoring common stopwords."""
     if not text:
@@ -206,25 +386,87 @@ def normalize_words(text: str) -> list[str]:
     return [w for w in cleaned.split() if w not in _STOPWORDS and len(w) > 1]
 
 
+def is_valid_estimated_opportunity(opp: Any) -> bool:
+    """Return True if the opportunity meets all criteria to be shown as estimated.
+
+    Task 4 rules:
+    - Official page exists (is_official_domain is True and source_url is non-empty)
+    - Evidence of a previous cycle exists (prev_cycle_date, prev_cycle_source, or descriptive evidence)
+    - Items with only 'Expected window TBA' and no evidence must not be shown.
+    """
+    src_url = getattr(opp, "source_url", "") or ""
+    org = getattr(opp, "organizer", "") or ""
+    if not src_url or not is_official_domain(src_url, org):
+        return False
+
+    status_raw = getattr(opp, "date_status", "")
+    status = status_raw.value if hasattr(status_raw, "value") else str(status_raw or "").lower()
+    if status != "estimated":
+        return False
+
+    prev_date = getattr(opp, "prev_cycle_date", None)
+    prev_src = (getattr(opp, "prev_cycle_source", "") or "").strip()
+    date_ev = (getattr(opp, "date_evidence", "") or "").strip()
+    window = (getattr(opp, "estimated_window", "") or "").strip()
+
+    clean_win = window.lower()
+    is_tba_window = not clean_win or clean_win in (
+        "expected window tba",
+        "window tba",
+        "tba",
+        "none",
+        "null",
+        "to be announced",
+    )
+
+    has_prev_cycle_evidence = bool(
+        prev_date
+        or (prev_src and is_official_domain(prev_src, org))
+        or re.search(
+            r"\b(?:202\d|cycle|previous|past|last\s+year|cohort|archive)\b", date_ev, re.IGNORECASE
+        )
+        or re.search(r"\bbased on (?:the )?202\d\b", window, re.IGNORECASE)
+    )
+
+    if is_tba_window and not (prev_date or prev_src or date_ev):
+        return False
+
+    return has_prev_cycle_evidence
+
+
 def compute_programme_signature(
     title: str,
     organizer: str = "",
     cycle_year: int | None = None,
+    source_url: str = "",
 ) -> tuple[str, str, int]:
-    """Extract (norm_organizer, norm_programme, cycle_year) tuple."""
-    org_words = normalize_words(organizer)
-    title_words = normalize_words(title)
+    """Extract (norm_organizer, norm_programme, cycle_year) tuple.
 
-    # If organizer is empty, try to derive organizer from first word(s) of title
-    if not org_words and title_words:
-        org_str = title_words[0]
-        prog_words = title_words[1:] if len(title_words) > 1 else title_words
+    Task 3: Never merge items whose organiser is blank or generic.
+    If missing, derive it from the official domain; if impossible, do not merge.
+    """
+    org_clean = re.sub(r"[^\w\s]", "", (organizer or "").lower()).strip()
+    is_generic = (
+        not org_clean
+        or org_clean in _GENERIC_ORGANIZERS
+        or all(w in _GENERIC_ORGANIZERS for w in org_clean.split())
+    )
+
+    if is_generic:
+        # Try to derive from official domain; if impossible, do not guess from title
+        derived = derive_organizer_from_official_domain(source_url)
+        org_str = derived if derived else ""
     else:
+        org_words = normalize_words(organizer)
         org_str = " ".join(org_words)
-        # Strip organizer words from title words to avoid duplicate org tokens in prog name
-        prog_words = [w for w in title_words if w not in org_words]
+
+    title_words = normalize_words(title)
+    if org_str:
+        prog_words = [w for w in title_words if w != org_str and w not in org_str.split()]
         if not prog_words:
             prog_words = title_words
+    else:
+        prog_words = title_words
 
     norm_prog = " ".join(prog_words)
     # Deduce cycle year if not given
@@ -245,24 +487,28 @@ def compute_dedupe_key(
 ) -> str:
     """Compute a canonical unique deduplication key.
 
-    Rule:
-    (same normalised organisation + programme name [ignoring words like "programme", "program", "2026", "2027", "paid" and country suffixes] + cycle_year)
-    OR
-    (same normalised official URL).
+    Rule (Task 3):
+    - Never merge items whose organiser is blank or generic.
+    - If missing, derive it from the official domain; if impossible, do not merge.
+    - Only merge if both valid non-generic organiser and programme name are established.
+    - If impossible, keep item separate (keyed by its canonical URL or unique hash).
     """
-    org_str, prog_str, year = compute_programme_signature(title, organizer, cycle_year)
-    norm_url = canonicalize_url(source_url or application_url)
+    clean_src = source_url or application_url
+    org_str, prog_str, year = compute_programme_signature(
+        title, organizer, cycle_year, source_url=clean_src
+    )
+    norm_url = canonicalize_url(clean_src)
 
-    # If both organizer and programme name are identifiable, use the programme key
+    # Only merge by programme key if organiser is valid and not generic
     if org_str and len(prog_str) >= 3:
         key = f"prog:{org_str}:{prog_str}:{year}"
         return key[:255]
 
-    # Fallback to canonical URL
+    # If organiser could not be determined from official domain: do NOT merge!
     if norm_url:
         return f"url:{norm_url}"[:255]
 
-    # Fallback to title hash
+    # Fallback to unique hash
     import hashlib
 
     fallback = hashlib.sha256(f"{title}:{organizer}:{year}".encode()).hexdigest()[:16]
@@ -313,21 +559,51 @@ def opportunity_rank(opp: Any) -> tuple:
 
 def merge_two_opportunity_records(
     winner_data: dict[str, Any], loser_data: dict[str, Any]
-) -> dict[str, Any]:
-    """Merge two duplicate opportunity records, preserving best fields and winner precedence."""
+) -> dict[str, Any] | None:
+    """Merge two duplicate opportunity records, preserving best fields and winner precedence.
+
+    Rules (Task 3):
+    - Never let a non-official URL replace an official one when merging.
+    - If no merged record has an official URL, drop the item (return None).
+    """
     merged = dict(winner_data)
 
-    # Prefer winner's official URL if winner is on official domain, else take loser's official URL if present
     winner_url = winner_data.get("source_url") or ""
     loser_url = loser_data.get("source_url") or ""
-    if not is_official_domain(winner_url) and is_official_domain(loser_url):
-        merged["source_url"] = loser_url
-        if not merged.get("application_url"):
-            merged["application_url"] = loser_data.get("application_url") or loser_url
+    winner_org = winner_data.get("organizer") or ""
+    loser_org = loser_data.get("organizer") or ""
 
-    # Retain application URL if missing in winner
-    if not merged.get("application_url") and loser_data.get("application_url"):
-        merged["application_url"] = loser_data["application_url"]
+    winner_is_off = is_official_domain(winner_url, winner_org)
+    loser_is_off = is_official_domain(loser_url, loser_org)
+
+    # Official URL precedence: never let non-official replace official!
+    if winner_is_off:
+        merged["source_url"] = winner_url
+    elif loser_is_off:
+        merged["source_url"] = loser_url
+    else:
+        # Check application_url
+        winner_app = winner_data.get("application_url") or ""
+        loser_app = loser_data.get("application_url") or ""
+        if is_official_domain(winner_app, winner_org):
+            merged["source_url"] = winner_app
+        elif is_official_domain(loser_app, loser_org):
+            merged["source_url"] = loser_app
+        else:
+            # Neither record has an official URL -> drop the item!
+            return None
+
+    # Application URL: similarly prefer official URL
+    winner_app = winner_data.get("application_url") or ""
+    loser_app = loser_data.get("application_url") or ""
+    if winner_app and is_official_domain(winner_app, winner_org):
+        merged["application_url"] = winner_app
+    elif loser_app and is_official_domain(loser_app, loser_org):
+        merged["application_url"] = loser_app
+    elif winner_app:
+        merged["application_url"] = winner_app
+    elif loser_app:
+        merged["application_url"] = loser_app
 
     # Retain non-empty reward/location/field if missing in winner
     for field in ("reward", "location", "field_required", "level_required", "estimated_window"):

@@ -454,3 +454,64 @@ async def test_card_layout_spacing_and_badges_styles():
         assert ".drawer.active" in css
         assert ".drawer.open" in css
         assert ".drawer-backdrop.open" in css
+
+
+@pytest.mark.asyncio
+async def test_frontend_clicking_details_opens_panel():
+    """Task 7: Frontend test asserting that clicking the Details button opens the detail panel."""
+    import asyncio
+    import threading
+
+    import uvicorn
+    from playwright.async_api import async_playwright
+
+    test_port = 8791
+    server_app = create_app()
+    config = uvicorn.Config(server_app, host="127.0.0.1", port=test_port, log_level="error")
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    # Wait for server to start
+    for _ in range(50):
+        if server.started:
+            break
+        await asyncio.sleep(0.05)
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(f"http://127.0.0.1:{test_port}/")
+
+            # Wait for cards with data-action="details" to render
+            await page.wait_for_selector('[data-action="details"]', timeout=8000)
+
+            # Check drawer is initially closed
+            drawer = page.locator("#drawer")
+            assert not await drawer.evaluate("el => el.classList.contains('open')")
+
+            # Click the Details button
+            details_btn = page.locator('[data-action="details"]').first
+            await details_btn.click()
+
+            # Assert drawer opens
+            await page.wait_for_selector("#drawer.open", timeout=5000)
+            assert await drawer.evaluate("el => el.classList.contains('open')")
+            assert await drawer.evaluate("el => el.classList.contains('active')")
+
+            # Verify drawer content is populated
+            drawer_content = page.locator("#drawerContent")
+            content_text = await drawer_content.text_content()
+            assert content_text and len(content_text.strip()) > 10
+
+            # Press Escape to close modal
+            await page.keyboard.press("Escape")
+            await page.wait_for_selector("#drawer:not(.open)", timeout=5000)
+            assert not await drawer.evaluate("el => el.classList.contains('open')")
+
+            await browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=2.0)

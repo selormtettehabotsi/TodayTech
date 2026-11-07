@@ -193,6 +193,8 @@ class Opportunity(BaseModel):
     # Verification & Date Confidence fields
     date_status: DateStatus = DateStatus.UNKNOWN
     estimated_window: str | None = None
+    prev_cycle_date: date | None = None
+    prev_cycle_source: str = ""
     cycle_year: int | None = None
     date_evidence: str = ""
     conflict: bool = False

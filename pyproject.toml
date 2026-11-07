@@ -39,6 +39,7 @@ dependencies = [
     # Search & scraping
     "beautifulsoup4>=4.12,<5",
     "feedparser>=6.0,<7",
+    "playwright>=1.40",
     # Telegram channels
     "telethon>=1.36,<2",
     # Utilities

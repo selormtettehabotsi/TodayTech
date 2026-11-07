@@ -298,7 +298,7 @@ async def test_regression_quota_fallback_forces_unknown():
 
 @pytest.mark.asyncio
 async def test_verification_rejects_aggregator_domain():
-    """Verify that domain verification downgrades aggregator/blog links."""
+    """Verify that the official-source gate drops aggregator/blog links outright."""
     today = date(2026, 11, 7)
     items = [
         {
@@ -312,11 +312,68 @@ async def test_verification_rejects_aggregator_domain():
     ]
 
     results = await validate_opportunity_batch(items, today, verify_pages=True)
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_official_source_gate_drops_all_aggregators_and_social():
+    """Task 1: Reject any item, whatever its date_status, whose source_url is on an
+
+    aggregator, social media, job board, blog, curated-list, degree-search or
+    scholarship-finder domain.
+    """
+    today = date(2026, 11, 7)
+    disallowed_urls = [
+        "https://www.facebook.com/groups/techscholarships/posts/123",
+        "https://www.linkedin.com/posts/activity-12345",
+        "https://devpost.com/hackathons/ghana-hack-2026",
+        "https://dev.events/conferences/africa-tech-2026",
+        "https://github.com/Julian048/CS-Everything-but-Internships",
+        "https://research.com/scholarships/computer-science",
+        "https://www.scholarshipsads.com/fully-funded-ghana-2026",
+        "https://scholarshiptab.com/scholarships/undergraduate-cs",
+        "https://opportunitiesforafricans.com/tech-fellowship-2026",
+        "https://techradar.substack.com/p/best-internships-2026",
+        "https://medium.com/@author/top-hackathons-2026",
+    ]
+
+    items = [
+        {
+            "title": f"Opportunity from {url}",
+            "source_url": url,
+            "apply_url": url,
+            "date_status": "confirmed",
+            "cycle_year": 2026,
+            "deadline": "2026-11-20",
+        }
+        for url in disallowed_urls
+    ]
+
+    results = await validate_opportunity_batch(items, today, verify_pages=False)
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_official_source_gate_promotes_official_apply_url():
+    """When source_url is an aggregator lead but application_url is official organizer page,
+
+    the scanner promotes application_url to source_url and preserves the opportunity.
+    """
+    today = date(2026, 11, 7)
+    items = [
+        {
+            "title": "AmaliTech Immersive Internship Programme",
+            "organizer": "AmaliTech",
+            "source_url": "https://www.linkedin.com/posts/activity-12345",  # Aggregator/social lead
+            "apply_url": "https://amalitech.com/immersive-internship-programme",  # Official page
+            "date_status": "confirmed",
+            "cycle_year": 2026,
+            "deadline": "2026-11-20",
+        }
+    ]
+    results = await validate_opportunity_batch(items, today, verify_pages=False)
     assert len(results) == 1
-    item = results[0]
-    assert item.date_status in (DateStatus.ESTIMATED, DateStatus.UNKNOWN)
-    assert item.conflict is True
-    assert "aggregator" in item.date_evidence.lower()
+    assert results[0].source_url == "https://amalitech.com/immersive-internship-programme"
 
 
 @pytest.mark.asyncio
@@ -361,3 +418,99 @@ async def test_verification_confirms_date_when_found_on_official_page():
     assert opp.verified_on == today
     assert opp.fetched_on == today
     assert "November 25, 2026" in opp.date_evidence
+
+
+def test_looks_script_rendered_detection():
+    """Task 6: Detect client-side rendered SPA shells."""
+    from todaytech.core.verification import looks_script_rendered
+
+    spa_shell = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Modern SPA App</title></head>
+    <body>
+        <div id="root"></div>
+        <noscript>You need to enable JavaScript to run this app.</noscript>
+        <script src="/static/js/bundle.js"></script>
+    </body>
+    </html>
+    """
+    assert (
+        looks_script_rendered(spa_shell, "You need to enable JavaScript to run this app.") is True
+    )
+
+    plain_html = """
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <h1>Traditional Server Rendered Page</h1>
+        <p>Deadline is December 15, 2026.</p>
+    </body>
+    </html>
+    """
+    assert (
+        looks_script_rendered(
+            plain_html, "Traditional Server Rendered Page Deadline is December 15, 2026."
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_script_rendered_page_retries_with_headless_browser_and_confirms():
+    """Task 6: If plain page fetch finds no dates and looks script-rendered,
+
+    retry with Playwright headless browser before downgrading.
+    """
+    from todaytech.core.verification import verify_official_page_deadline
+
+    today = date(2026, 11, 7)
+    target_deadline = date(2026, 12, 15)
+
+    # 1. Plain HTTP response returns only empty React shell without the deadline
+    plain_spa_html = """
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <div id="root"></div>
+        <noscript>Please enable JavaScript to view applications.</noscript>
+        <script src="/bundle.js"></script>
+    </body>
+    </html>
+    """
+    mock_transport = httpx.MockTransport(lambda request: httpx.Response(200, text=plain_spa_html))
+
+    # 2. Mock Playwright headless browser rendering the hydrated SPA containing the deadline
+    rendered_spa_html = """
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <div id="root">
+            <main>
+                <h1>Client-Side Rendered Hackathon 2026</h1>
+                <p>Application deadline: December 15, 2026</p>
+            </main>
+        </div>
+    </body>
+    </html>
+    """
+
+    with patch(
+        "todaytech.core.verification.fetch_page_with_headless_browser",
+        new=AsyncMock(return_value=rendered_spa_html),
+    ) as mock_playwright:
+        async with httpx.AsyncClient(transport=mock_transport) as mock_client:
+            verified, status, snippet, explanation = await verify_official_page_deadline(
+                source_url="https://officialhackathon.org/spa-app",
+                deadline=target_deadline,
+                today_date=today,
+                client=mock_client,
+            )
+
+        # Assert Playwright was called because plain HTML was a script-rendered shell
+        mock_playwright.assert_called_once_with("https://officialhackathon.org/spa-app")
+        assert verified is True
+        assert status == "confirmed"
+        assert snippet is not None
+        assert "December 15, 2026" in snippet
+        assert "headless browser" in explanation

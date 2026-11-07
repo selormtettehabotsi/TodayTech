@@ -10,61 +10,12 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
+from todaytech.core.dedupe import _NON_OFFICIAL_DOMAINS, is_official_domain
+
 log = structlog.get_logger()
 
 # Disallowed aggregator, directory, blog, and social media domains
-DISALLOWED_DOMAINS = {
-    # Aggregators and job/scholarship boards
-    "devpost.com",
-    "opportunitydesk.org",
-    "scholarshipbob.com",
-    "scholarships.jobzhiring.com",
-    "youthop.com",
-    "youthopportunitieshub.com",
-    "advance-africa.com",
-    "unstop.com",
-    "afterschoolafrica.com",
-    "scholarshipregion.com",
-    "globalscholarships.com",
-    "grabascholarship.com",
-    "indiatoday.in",
-    "hackerearth.com",
-    "eventbrite.com",
-    "meetup.com",
-    "scholarshipstory.com",
-    "opportunitiesforafricans.com",
-    "scholarshiptab.com",
-    "wemakescholars.com",
-    "scholars4dev.com",
-    "heysuccess.com",
-    "armacad.info",
-    "fundsforngos.org",
-    "opportunitiescircle.com",
-    "opportunitiescorner.com",
-    "fullyfundedaffairs.com",
-    # Social media & user-generated forums
-    "linkedin.com",
-    "twitter.com",
-    "x.com",
-    "facebook.com",
-    "instagram.com",
-    "t.me",
-    "telegram.me",
-    "reddit.com",
-    "medium.com",
-    "substack.com",
-    "youtube.com",
-    "quora.com",
-    "tiktok.com",
-    # Generic blogging / site builders
-    "wordpress.com",
-    "blogspot.com",
-    "tumblr.com",
-    "wixsite.com",
-    "weebly.com",
-    "notion.site",
-    "canva.site",
-}
+DISALLOWED_DOMAINS = _NON_OFFICIAL_DOMAINS
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -76,19 +27,66 @@ _BROWSER_HEADERS = {
 }
 
 
-def is_disallowed_domain(url: str) -> tuple[bool, str]:
+def is_disallowed_domain(url: str, organizer: str = "") -> tuple[bool, str]:
     """Check if the URL belongs to an aggregator, blog or social media site."""
+    if not is_official_domain(url, organizer):
+        try:
+            hostname = (urlparse(url).hostname or "").lower()
+        except Exception:
+            hostname = "invalid_url"
+        return True, hostname or "non_official_domain"
+    return False, ""
+
+
+def looks_script_rendered(html: str, visible_text: str) -> bool:
+    """Return True if the fetched page appears to be a client-side JavaScript rendered SPA."""
+    lower_html = html.lower()
+
+    if any(
+        phrase in lower_html
+        for phrase in (
+            "enable javascript to run this app",
+            "javascript is disabled",
+            "please enable javascript",
+            "requires javascript",
+            "javascript must be enabled",
+        )
+    ):
+        return True
+
+    spa_containers = (
+        'id="root"',
+        'id="app"',
+        'id="__next"',
+        "<app-root>",
+        "window.__next_data__",
+        "window.__nuxt__",
+    )
+    has_spa_container = any(c in lower_html for c in spa_containers)
+    if has_spa_container and len(visible_text.strip()) < 800:
+        return True
+
+    if len(visible_text.strip()) < 200 and "<script" in lower_html:
+        return True
+
+    return False
+
+
+async def fetch_page_with_headless_browser(url: str, timeout: float = 15.0) -> str | None:
+    """Task 6: Render client-side page with Playwright headless browser."""
     try:
-        parsed = urlparse(url)
-        hostname = (parsed.hostname or "").lower()
-        if not hostname:
-            return True, "missing_hostname"
-        for disallowed in DISALLOWED_DOMAINS:
-            if hostname == disallowed or hostname.endswith("." + disallowed):
-                return True, disallowed
-        return False, ""
-    except Exception:
-        return True, "invalid_url"
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(user_agent=_BROWSER_HEADERS["User-Agent"])
+            await page.goto(url, wait_until="networkidle", timeout=int(timeout * 1000))
+            content = await page.content()
+            await browser.close()
+            return content
+    except Exception as exc:
+        log.warning("verification.playwright_fetch_failed", url=url, error=str(exc))
+        return None
 
 
 def generate_date_patterns(d: date) -> list[re.Pattern]:
@@ -199,6 +197,38 @@ async def verify_official_page_deadline(
                     snippet=snippet,
                 )
                 return True, "confirmed", snippet, f"Verified on official page: '{snippet}'"
+
+        # Task 6: Script-rendered pages
+        # If plain page fetch finds no dates and looks script-rendered, retry with Playwright headless browser before downgrading
+        if looks_script_rendered(html, visible_text):
+            log.info(
+                "verification.script_rendered_detected",
+                url=source_url,
+                action="retry_with_headless_browser",
+            )
+            rendered_html = await fetch_page_with_headless_browser(source_url)
+            if rendered_html:
+                soup_rendered = BeautifulSoup(rendered_html, "html.parser")
+                for tag in soup_rendered(["script", "style", "noscript"]):
+                    tag.decompose()
+                rendered_text = soup_rendered.get_text(separator=" ", strip=True)
+
+                for pat in patterns:
+                    match = pat.search(rendered_text)
+                    if match:
+                        snippet = extract_evidence_snippet(rendered_text, match.span())
+                        log.info(
+                            "verification.confirmed_via_headless_browser",
+                            url=source_url,
+                            deadline=str(deadline),
+                            snippet=snippet,
+                        )
+                        return (
+                            True,
+                            "confirmed",
+                            snippet,
+                            f"Verified on script-rendered page via headless browser: '{snippet}'",
+                        )
 
         # Deadline not found on official page
         msg = f"Fetched on {today_date}: official page did not contain stated deadline {deadline}."

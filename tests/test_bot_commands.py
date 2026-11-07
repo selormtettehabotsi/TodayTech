@@ -115,21 +115,46 @@ async def test_cmd_deadlines_confirmed_only():
 
 @pytest.mark.asyncio
 async def test_cmd_estimated():
-    """Verify /estimated returns estimated items with estimated window and source URL."""
+    """Task 4: Verify /estimated returns estimated items with previous cycle evidence,
+
+    and excludes items with only 'Expected window TBA' or non-official sources.
+    """
     today = date.today()
     async with get_session() as session:
+        # Valid estimated item with previous cycle evidence
         await upsert_opportunity(
             session,
             {
                 "external_id": "est_gsoc",
                 "title": "Google Summer of Code 2027",
+                "organizer": "Google",
                 "type": "fellowship",
                 "deadline": None,
                 "date_status": DateStatus.ESTIMATED.value,
-                "estimated_window": "likely late March 2027",
+                "estimated_window": "likely late March 2027, based on the 2026 cycle",
+                "prev_cycle_date": date(2026, 4, 8),
+                "prev_cycle_source": "https://summerofcode.withgoogle.com/archive",
                 "source_url": "https://summerofcode.withgoogle.com",
                 "fit_score": 95,
                 "verified_on": today,
+            },
+        )
+        # Invalid estimated item: only "Expected window TBA" with no evidence
+        await upsert_opportunity(
+            session,
+            {
+                "external_id": "est_tba_no_evidence",
+                "title": "Unannounced Tech Fellowship 2027",
+                "organizer": "Tech Org",
+                "type": "fellowship",
+                "deadline": None,
+                "date_status": DateStatus.ESTIMATED.value,
+                "estimated_window": "Expected window TBA",
+                "prev_cycle_date": None,
+                "prev_cycle_source": "",
+                "date_evidence": "",
+                "source_url": "https://techorg.org/fellowship",
+                "fit_score": 90,
             },
         )
         await session.commit()
@@ -150,6 +175,9 @@ async def test_cmd_estimated():
     assert "[ESTIMATED]" in reply_text
     assert "likely late March 2027" in reply_text
     assert "https://summerofcode.withgoogle.com" in reply_text
+    assert "2026-04-08" in reply_text
+    # Item with only "Expected window TBA" and no evidence must NOT be shown!
+    assert "Unannounced Tech Fellowship 2027" not in reply_text
 
 
 def test_format_details():

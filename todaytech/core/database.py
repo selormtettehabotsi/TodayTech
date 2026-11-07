@@ -64,6 +64,8 @@ class OpportunityRow(Base):
     # Verification & Date Confidence fields
     date_status: Mapped[str] = mapped_column(String(32), default="unknown")
     estimated_window: Mapped[str | None] = mapped_column(String(256), nullable=True, default=None)
+    prev_cycle_date: Mapped[date | None] = mapped_column(nullable=True, default=None)
+    prev_cycle_source: Mapped[str] = mapped_column(String(1024), default="")
     cycle_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     date_evidence: Mapped[str] = mapped_column(Text, default="")
     conflict: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -191,6 +193,12 @@ def _migrate_schema(connection) -> None:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN fetched_on DATE")
     if "days_remaining" not in columns:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN days_remaining INTEGER")
+    if "prev_cycle_date" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN prev_cycle_date DATE")
+    if "prev_cycle_source" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN prev_cycle_source VARCHAR(1024) DEFAULT ''"
+        )
     if "dedupe_key" not in columns:
         alter_statements.append(
             "ALTER TABLE opportunities ADD COLUMN dedupe_key VARCHAR(256) DEFAULT ''"
@@ -205,20 +213,29 @@ def _migrate_schema(connection) -> None:
     # Task 3: Remove existing roundup and listicle entries from the database
     from todaytech.core.dedupe import (
         compute_dedupe_key,
+        is_official_domain,
         opportunity_rank,
     )
+    from todaytech.core.partner_programs import validate_partner_program
     from todaytech.core.roundup_filter import is_roundup_or_directory
 
     try:
         res_all = connection.execute(
             text(
-                "SELECT id, title, organizer, source_url, application_url, external_id FROM opportunities"
+                "SELECT id, title, organizer, source_url, application_url, external_id, level_required FROM opportunities"
             )
         )
         roundup_ids = []
         for row in res_all.fetchall():
             is_roundup, _ = is_roundup_or_directory(row[1], row[2], row[3], row[4])
             if is_roundup:
+                roundup_ids.append(row[0])
+                continue
+            lvl = row[6] if len(row) > 6 and row[6] else ""
+            is_part_valid, _ = validate_partner_program(
+                row[1], row[2], row[3], row[4], level_required=lvl
+            )
+            if not is_part_valid:
                 roundup_ids.append(row[0])
 
         if roundup_ids:
@@ -235,7 +252,7 @@ def _migrate_schema(connection) -> None:
         connection.execute(text("DROP INDEX IF EXISTS uq_opportunities_dedupe_key"))
         res_need_key = connection.execute(
             text(
-                "SELECT id, title, organizer, cycle_year, source_url, application_url FROM opportunities WHERE dedupe_key IS NULL OR dedupe_key = ''"
+                "SELECT id, title, organizer, cycle_year, source_url, application_url FROM opportunities"
             )
         )
         for row in res_need_key.fetchall():
@@ -327,6 +344,30 @@ def _migrate_schema(connection) -> None:
             connection.execute(text(f"DELETE FROM opportunities WHERE id IN ({loser_ids})"))
     except Exception as exc:
         log.warning("database.migration_dedupe_merge_error", error=str(exc))
+
+    # Purge non-official sources where no official source/apply URL exists (Task 1 & Task 3)
+    try:
+        res_non_off = connection.execute(
+            text("SELECT id, title, organizer, source_url, application_url FROM opportunities")
+        )
+        non_off_ids = []
+        for r in res_non_off.fetchall():
+            row_id, title, org, src, app = r
+            if not is_official_domain(src, org):
+                if is_official_domain(app, org):
+                    connection.execute(
+                        text("UPDATE opportunities SET source_url = :src WHERE id = :id"),
+                        {"src": app, "id": row_id},
+                    )
+                else:
+                    non_off_ids.append(row_id)
+        if non_off_ids:
+            for i in range(0, len(non_off_ids), 200):
+                chunk = non_off_ids[i : i + 200]
+                placeholders = ",".join(str(cid) for cid in chunk)
+                connection.execute(text(f"DELETE FROM opportunities WHERE id IN ({placeholders})"))
+    except Exception as exc:
+        log.warning("database.migration_non_official_purge_error", error=str(exc))
 
     # Task 4: Unique index on dedupe_key column
     try:
@@ -470,19 +511,36 @@ async def upsert_opportunity(
                 "application_url": row.application_url,
                 "source_url": row.source_url,
                 "estimated_window": row.estimated_window,
+                "organizer": row.organizer,
             },
         )
+        if winner_data is None:
+            await session.delete(row)
+            await session.flush()
+            return None, False
         for key, value in winner_data.items():
             if key != "id" and key != "first_seen":
                 setattr(row, key, value)
     else:
         # Existing wins: merge incoming non-empty fields into existing
-        if not row.reward and data.get("reward"):
-            row.reward = data["reward"]
-        if not row.location and data.get("location"):
-            row.location = data["location"]
-        if not row.application_url and data.get("application_url"):
-            row.application_url = data["application_url"]
+        merged = merge_two_opportunity_records(
+            {
+                "reward": row.reward,
+                "location": row.location,
+                "application_url": row.application_url,
+                "source_url": row.source_url,
+                "estimated_window": row.estimated_window,
+                "organizer": row.organizer,
+            },
+            data,
+        )
+        if merged is None:
+            await session.delete(row)
+            await session.flush()
+            return None, False
+        for key in ("reward", "location", "application_url", "source_url", "estimated_window"):
+            if merged.get(key):
+                setattr(row, key, merged[key])
 
     row.last_seen = func.now()
     await session.flush()
