@@ -39,7 +39,7 @@ jobs:
             sleep 10
 
             echo "--> Running health check on Web API..."
-            curl --fail --retry 5 --retry-delay 3 --retry-connrefused http://localhost:8000/api/stats || {
+            curl --fail --retry 5 --retry-delay 3 --retry-connrefused http://localhost:8000/health || {
               echo "Health check failed!"
               sudo docker compose logs --tail 50
               exit 1
@@ -50,3 +50,4 @@ jobs:
 
             echo "--> Deployment successful!"
           EOF
+

@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none';">
   <title>TodayTech — Personal Opportunity Radar</title>
   <meta name="description" content="Personal opportunity-radar for students and early-career developers. Find hackathons, fellowships, internships, and grants you are eligible for.">
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+  <script src="/static/js/purify.min.js"></script>
 </head>
 <body>
 
@@ -54,7 +54,7 @@
           <span>Preferences</span>
         </button>
 
-        <button id="refreshBtn" class="btn btn-secondary btn-sm" onclick="manualRefresh()" title="Reload latest opportunities and stats">
+        <button id="refreshBtn" class="btn btn-secondary btn-sm" title="Reload latest opportunities and stats">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>

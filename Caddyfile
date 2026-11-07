@@ -1,0 +1,19 @@
+# Caddyfile — Reverse Proxy with Automatic Let's Encrypt HTTPS
+# Set DOMAIN=yourdomain.com in .env for automated public TLS certificates.
+# Defaults to listening on :80 and :443 if DOMAIN is unset.
+
+{$DOMAIN::80} {
+    reverse_proxy todaytech-web:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

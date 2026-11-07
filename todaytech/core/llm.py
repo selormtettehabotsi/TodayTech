@@ -73,6 +73,84 @@ def parse_defensive_json_array(raw: str) -> list[dict[str, Any]]:
     return []
 
 
+async def _call_gemini_grounded(
+    api_key: str,
+    prompt: str,
+    system: str = "",
+) -> tuple[str, bool, str | None]:
+    """Call Google Gemini API with Google Search grounding and verify grounding metadata.
+
+    Returns:
+        (text, is_grounded, failure_reason)
+    """
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
+    last_err: Exception | None = None
+    is_quota = False
+
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        headers = {"Content-Type": "application/json"}
+        params = {"key": api_key}
+
+        contents = []
+        if system:
+            contents.append({"role": "user", "parts": [{"text": system}]})
+            contents.append({"role": "model", "parts": [{"text": "Understood."}]})
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+
+        body: dict[str, Any] = {
+            "contents": contents,
+            "tools": [{"googleSearch": {}}],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(url, headers=headers, params=params, json=body)
+                if resp.status_code == 429:
+                    is_quota = True
+                    last_err = RuntimeError("Gemini quota limit exceeded (HTTP 429)")
+                    log.warning("gemini.quota_limit", model=model)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                candidate = data.get("candidates", [{}])[0]
+                parts = candidate.get("content", {}).get("parts", [])
+                texts = [p["text"] for p in parts if "text" in p]
+                text = "\n".join(texts)
+
+                # Check for genuine grounding metadata
+                grounding_meta = candidate.get("groundingMetadata")
+                has_grounding = bool(
+                    grounding_meta
+                    and (
+                        grounding_meta.get("webSearchQueries")
+                        or grounding_meta.get("groundingChunks")
+                        or grounding_meta.get("groundingSupports")
+                    )
+                )
+
+                if not has_grounding:
+                    log.warning("gemini.no_grounding_metadata", model=model)
+                    return text, False, "No grounding metadata or search queries returned by Gemini"
+
+                return text, True, None
+        except Exception as exc:
+            err_str = str(exc).lower()
+            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                is_quota = True
+            last_err = exc
+            log.warning("gemini.grounded_model_failed", model=model, error=str(exc))
+            continue
+
+    fail_reason = (
+        "Google Search grounding hit quota limit (429 / Resource Exhausted)"
+        if is_quota
+        else f"Google Search grounding failed: {last_err or 'All Gemini models failed'}"
+    )
+    return "", False, fail_reason
+
+
 async def _call_gemini(
     api_key: str,
     prompt: str,
@@ -313,10 +391,26 @@ class LLMClient:
         prompt: str,
         *,
         system: str = "",
-    ) -> list[dict[str, Any]]:
-        """Generate with Google Search grounding and defensively parse JSON array."""
-        raw = await self.generate(prompt, system=system, json_mode=False, enable_grounding=True)
-        return parse_defensive_json_array(raw)
+    ) -> tuple[list[dict[str, Any]], bool, str | None]:
+        """Generate with Google Search grounding, verify grounding metadata, and parse JSON array.
+
+        Returns:
+            (items, is_grounded, failure_reason)
+        """
+        gemini_key = next((key for name, key in self._providers if name == "gemini"), None)
+        if not gemini_key:
+            return [], False, "No Gemini API key configured"
+
+        text, is_grounded, reason = await _call_gemini_grounded(
+            gemini_key,
+            prompt,
+            system=system,
+        )
+        if not text:
+            return [], False, reason
+
+        items = parse_defensive_json_array(text)
+        return items, is_grounded, reason
 
     @staticmethod
     async def _dispatch(

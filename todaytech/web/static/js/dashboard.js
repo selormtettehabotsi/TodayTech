@@ -175,7 +175,7 @@ async function loadStats() {
     document.getElementById('statSaved').textContent = data.saved_count || '0';
     document.getElementById('statDrafting').textContent = data.drafting_count || '0';
   } catch (err) {
-    console.error('Failed to load stats', err);
+    // Error loading stats
   }
 }
 
@@ -219,7 +219,6 @@ async function loadOpportunities() {
     container.innerHTML = items.map((opp) => renderCard(opp)).join('');
   } catch (err) {
     if (requestId !== opportunitiesRequestId) return;
-    console.error('Failed to load opportunities', err);
     container.innerHTML = `<p style="color: var(--text-muted); padding: 24px;">Failed to load opportunities.</p>`;
   }
 }
@@ -231,7 +230,7 @@ async function loadPipeline() {
     const items = await res.json();
     updatePipeline(items);
   } catch (err) {
-    console.error('Failed to load pipeline', err);
+    // Pipeline load error
   }
 }
 
@@ -273,7 +272,7 @@ function renderCard(opp) {
 
   const verifiedBadge = opp.verified_on ? `Verified ${formatDeadlineDate(opp.verified_on)}` : 'Pending Verification';
   const sourceLinkHtml = opp.source_url ? `
-    <a href="${escapeHtml(opp.source_url)}" target="_blank" rel="noopener noreferrer" class="source-link" onclick="event.stopPropagation();" title="Open official organizer verification page" style="display:inline-flex; align-items:center; gap:4px; color:var(--text-muted); font-size:12px; text-decoration:none;">
+    <a href="${escapeHtml(opp.source_url)}" target="_blank" rel="noopener noreferrer" class="source-link" title="Open official organizer verification page" style="display:inline-flex; align-items:center; gap:4px; color:var(--text-muted); font-size:12px; text-decoration:none;">
       ${ICONS.externalLink}
       <span style="text-decoration:underline;">Source</span>
     </a>
@@ -281,7 +280,7 @@ function renderCard(opp) {
 
   return `
     <article class="card">
-      <div class="card-top" onclick="openAssistant('${opp.id}')" style="cursor: pointer;">
+      <div class="card-top" data-action="open-assistant" data-id="${opp.id}" style="cursor: pointer;">
         <span class="type-tag ${typeClass}">${escapeHtml(opp.type)}</span>
         <span class="badge-score">
           ${ICONS.check}
@@ -289,12 +288,12 @@ function renderCard(opp) {
         </span>
       </div>
 
-      <h2 class="card-title" onclick="openAssistant('${opp.id}')" title="Click to view requirements and prepare drafts">
+      <h2 class="card-title" data-action="open-assistant" data-id="${opp.id}" title="Click to view requirements and prepare drafts">
         ${escapeHtml(opp.title)}
       </h2>
       <p class="card-org">${escapeHtml(opp.organizer)}</p>
 
-      <div class="card-metadata" onclick="openAssistant('${opp.id}')" style="cursor: pointer;">
+      <div class="card-metadata" data-action="open-assistant" data-id="${opp.id}" style="cursor: pointer;">
         <div class="meta-row">
           <span class="meta-icon">${ICONS.award}</span>
           <span class="meta-highlight">${escapeHtml(opp.reward || 'Recognition & Experience')}</span>
@@ -319,10 +318,10 @@ function renderCard(opp) {
       <p class="card-reason">${escapeHtml(opp.fit_reason || 'Strong match for your profile')}</p>
 
       <div class="card-actions">
-        <button class="btn btn-primary btn-sm" onclick="openAssistant('${opp.id}')">
+        <button class="btn btn-primary btn-sm" data-action="open-assistant" data-id="${opp.id}">
           Prepare Application
         </button>
-        <button class="${saveClass}" onclick="toggleSave('${opp.id}', '${opp.status}')" title="${saveTitle}" style="display: inline-flex; align-items: center; gap: 5px;">
+        <button class="${saveClass}" data-action="toggle-save" data-id="${opp.id}" data-status="${opp.status}" title="${saveTitle}" style="display: inline-flex; align-items: center; gap: 5px;">
           ${saveIcon}
           <span>${saveLabel}</span>
         </button>
@@ -358,12 +357,12 @@ function updatePipeline(items) {
     }
 
     return `
-      <div class="pipeline-item" onclick="openAssistant('${item.id}')" title="Click to open application studio">
+      <div class="pipeline-item" data-action="open-assistant" data-id="${item.id}" title="Click to open application studio">
         <div class="pipeline-item-top">
           <span class="pipeline-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
           <div class="pipeline-item-actions">
             <span class="status-badge status-${item.status}">${item.status.replace('_', ' ')}</span>
-            <button class="pipeline-remove-btn" onclick="event.stopPropagation(); unsaveOpportunity('${item.id}')" title="Unsave / Remove from pipeline" aria-label="Unsave opportunity">
+            <button class="pipeline-remove-btn" data-action="unsave" data-id="${item.id}" title="Unsave / Remove from pipeline" aria-label="Unsave opportunity">
               ${ICONS.cross}
             </button>
           </div>
@@ -391,7 +390,6 @@ async function unsaveOpportunity(id) {
       openAssistant(id);
     }
   } catch (err) {
-    console.error('Failed to unsave opportunity', err);
     showToast('Failed to update pipeline');
   }
 }
@@ -413,7 +411,6 @@ async function toggleSave(id, currentStatus) {
       openAssistant(id);
     }
   } catch (err) {
-    console.error('Failed to toggle save state', err);
     showToast('Failed to update opportunity state');
   }
 }
@@ -453,7 +450,7 @@ async function openAssistant(id) {
           <span style="font-weight: 500; color: var(--text-muted);">Status:</span>
           <span class="status-badge status-${data.status || 'radar'}">${statusText}</span>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="toggleSaveFromDrawer('${data.id}', '${data.status || 'radar'}')">
+        <button class="btn btn-secondary btn-sm" data-action="drawer-save" data-id="${data.id}" data-status="${data.status || 'radar'}">
           ${toggleBtnText}
         </button>
       </div>
@@ -498,7 +495,7 @@ async function openAssistant(id) {
       <div class="studio-section">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
           <h3 class="studio-section-title" style="margin: 0;">Tailored Application Studio</h3>
-          <button class="btn btn-primary btn-sm" id="generateDraftBtn" onclick="generateDrafts('${data.id}')">
+          <button class="btn btn-primary btn-sm" id="generateDraftBtn" data-action="generate-drafts" data-id="${data.id}">
             Generate Tailored Draft
           </button>
         </div>
@@ -513,7 +510,6 @@ async function openAssistant(id) {
     document.getElementById('applyExternalLink').href = data.application_url || '#';
     fetchDrafts(data.id);
   } catch (err) {
-    console.error('Failed to open assistant', err);
     content.innerHTML = `
       <div style="padding: 24px;">
         <p style="color: var(--accent-terracotta-text); font-weight: 500; margin-bottom: 8px;">
@@ -538,7 +534,7 @@ async function fetchDrafts(id) {
       renderDraftFiles(id, data.files, data.content);
     }
   } catch (err) {
-    console.debug('No drafts available yet:', err);
+    // Drafts not ready
   }
 }
 
@@ -568,7 +564,7 @@ function renderDraftFiles(id, files, content) {
   draftContainer.innerHTML = `
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
       <span style="font-size: 12.5px; font-weight: 600; color: var(--accent-sage-text);">Materials Ready to Download</span>
-      <button class="btn-link" onclick="copyDraftText()" style="display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border: none; background: transparent;">
+      <button class="btn-link" data-action="copy-draft" style="display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border: none; background: transparent;">
         ${ICONS.copy}
         <span id="copyBtnLabel">Copy Text</span>
       </button>
@@ -658,7 +654,6 @@ function fallbackCopy(text, onSuccess) {
       showToast('Please select and copy text manually');
     }
   } catch (err) {
-    console.warn('Fallback copy error:', err);
     showToast('Please select and copy text manually');
   }
 }
@@ -734,7 +729,6 @@ async function loadDigest(timeframe = 'day') {
       }
     }
   } catch (err) {
-    console.error('Failed to load digest', err);
     if (closingList) closingList.innerHTML = `<p style="color: var(--accent-terracotta-text); padding: 16px;">Failed to load digest.</p>`;
     if (hotList) hotList.innerHTML = `<p style="color: var(--accent-terracotta-text); padding: 16px;">Failed to load digest.</p>`;
   }
@@ -748,7 +742,7 @@ function renderDigestCard(item, isUrgent = false) {
   }
 
   return `
-    <div class="digest-item-card" onclick="openOpportunityFromDigest('${item.id}')" title="Click to view full details and application materials">
+    <div class="digest-item-card" data-action="open-digest-opp" data-id="${item.id}" title="Click to view full details and application materials">
       <div class="digest-item-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span class="type-tag ${typeClass}" style="font-size: 10px; padding: 2px 8px;">${item.type}</span>
@@ -824,7 +818,7 @@ async function openSettingsModal() {
     document.getElementById('profSkills').value = (profile.skills || []).join(', ');
     document.getElementById('profInterests').value = (profile.interests || []).join(', ');
   } catch (err) {
-    console.error('Failed to load profile', err);
+    // Profile load error
   }
 }
 
@@ -926,7 +920,7 @@ async function triggerScan() {
           }
         }
       } catch (pollErr) {
-        console.debug('Scan status check error', pollErr);
+        // Poll status retry
       }
 
       if (seconds >= 120) {
@@ -989,3 +983,41 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Global Event Delegation (Strict CSP Compliant, Zero Inline Handlers)
+// ──────────────────────────────────────────────────────────────────────────
+
+document.addEventListener('click', (e) => {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.getAttribute('data-action');
+  const id = actionEl.getAttribute('data-id');
+
+  if (action === 'open-assistant') {
+    openAssistant(id);
+  } else if (action === 'toggle-save') {
+    e.stopPropagation();
+    const status = actionEl.getAttribute('data-status') || 'radar';
+    toggleSave(id, status);
+  } else if (action === 'unsave') {
+    e.stopPropagation();
+    unsaveOpportunity(id);
+  } else if (action === 'drawer-save') {
+    const status = actionEl.getAttribute('data-status') || 'radar';
+    toggleSaveFromDrawer(id, status);
+  } else if (action === 'generate-drafts') {
+    generateDrafts(id);
+  } else if (action === 'copy-draft') {
+    copyDraftText();
+  } else if (action === 'open-digest-opp') {
+    openOpportunityFromDigest(id);
+  }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  const refreshBtn = document.getElementById('refreshBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', manualRefresh);
+  }
+});

@@ -67,6 +67,7 @@ class OpportunityRow(Base):
     date_evidence: Mapped[str] = mapped_column(Text, default="")
     conflict: Mapped[bool] = mapped_column(Boolean, default=False)
     verified_on: Mapped[date | None] = mapped_column(nullable=True, default=None)
+    fetched_on: Mapped[date | None] = mapped_column(nullable=True, default=None)
     days_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     fit_score: Mapped[int] = mapped_column(Integer, default=0)
@@ -184,6 +185,8 @@ def _migrate_schema(connection) -> None:
         )
     if "verified_on" not in columns:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN verified_on DATE")
+    if "fetched_on" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN fetched_on DATE")
     if "days_remaining" not in columns:
         alter_statements.append("ALTER TABLE opportunities ADD COLUMN days_remaining INTEGER")
 

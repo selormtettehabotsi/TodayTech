@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 from thefuzz import fuzz
 
 from todaytech.collectors import get_all_collectors
+from todaytech.core.alerts import send_telegram_alert
 from todaytech.core.config import get_settings, load_profile
 from todaytech.core.database import (
     ScanRow,
@@ -37,6 +38,7 @@ from todaytech.core.models import (
 )
 from todaytech.core.scam_filter import check_scam
 from todaytech.core.scoring import compute_fit_score
+from todaytech.core.verification import verify_official_page_deadline
 
 log = structlog.get_logger()
 
@@ -526,10 +528,16 @@ async def scan_with_gemini_grounded(
     profile: UserProfile,
     settings: Any,
     today_utc: date | None = None,
-) -> list[dict[str, Any]]:
-    """Scan and verify opportunities using Gemini with Google Search grounding."""
+) -> tuple[list[dict[str, Any]], bool, str | None]:
+    """Scan and verify opportunities using Gemini with Google Search grounding.
+
+    If Google Search grounding fails, hits quota, or returns no grounding metadata:
+    - Forces items with date_status 'confirmed' to 'unknown'
+    - Logs the reason
+    - Sends a Telegram alert that the scan ran ungrounded
+    """
     if not getattr(settings, "gemini_api_key", ""):
-        return []
+        return [], False, "No Gemini API key configured"
 
     if today_utc is None:
         today_utc = datetime.now(timezone.utc).date()
@@ -557,30 +565,64 @@ async def scan_with_gemini_grounded(
 
     try:
         llm = create_llm_client_from_settings(settings)
-        items = await llm.generate_grounded_json_array(
+        items, is_grounded, failure_reason = await llm.generate_grounded_json_array(
             prompt,
             system="You are a verification-first opportunity scanner. Rely strictly on Google Search for current dates.",
         )
-        log.info("gemini_grounded_scanner.success", count=len(items))
-        return items
+
+        if not is_grounded:
+            reason = failure_reason or "No grounding metadata or search queries returned by Gemini"
+            log.warning("gemini_grounded_scanner.ungrounded", reason=reason, count=len(items))
+            # Task 1: Force all items to unknown, log reason, and send Telegram alert
+            for item in items:
+                if str(item.get("date_status", "")).lower() == "confirmed":
+                    item["date_status"] = "unknown"
+                    item["conflict"] = True
+                    item["date_evidence"] = f"Forced to unknown: scan ran ungrounded ({reason})"
+
+            alert_msg = (
+                f"⚠️ *TodayTech Alert: Scan Ran Ungrounded*\n\n"
+                f"• *Reason*: `{reason}`\n"
+                f"• *Action*: All opportunities forced to `date_status: unknown`.\n"
+                f"• *Time*: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} GMT"
+            )
+            await send_telegram_alert(alert_msg, settings=settings)
+        else:
+            log.info("gemini_grounded_scanner.success", count=len(items))
+
+        return items, is_grounded, failure_reason
     except Exception as exc:
-        log.warning("gemini_grounded_scanner.failed", error=str(exc))
-        return []
+        reason = f"Gemini search grounding failed: {exc}"
+        log.warning("gemini_grounded_scanner.failed", error=reason)
+        alert_msg = (
+            f"⚠️ *TodayTech Alert: Grounding Unavailable*\n\n"
+            f"• *Error*: `{reason}`\n"
+            f"• *Action*: Falling back to standard collectors. Confirmed dates disabled.\n"
+            f"• *Time*: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} GMT"
+        )
+        await send_telegram_alert(alert_msg, settings=settings)
+        return [], False, reason
 
 
-def validate_opportunity_batch(
+async def validate_opportunity_batch(
     raw_items: Sequence[dict[str, Any] | Opportunity],
     today_date: date,
     max_cap: int = 25,
+    *,
+    is_grounded_scan: bool = True,
+    verify_pages: bool = True,
+    client: httpx.AsyncClient | None = None,
 ) -> list[Opportunity]:
     """Strict validation layer that does not trust the LLM or raw sources.
 
     1. Drop items with no source_url.
-    2. Drop items whose confirmed deadline is before today.
-    3. Reject any 'confirmed' item whose deadline year does not match cycle_year, and downgrade it to 'estimated'.
-    4. Deduplicate by apply_url.
-    5. Compute days_remaining in code, only for confirmed deadlines.
-    6. Cap results at 25 per scan.
+    2. Force items to unknown if scan ran ungrounded (Task 1).
+    3. Drop items whose confirmed deadline is before today.
+    4. Reject any 'confirmed' item whose deadline year does not match cycle_year, and downgrade it.
+    5. Server-side page verification: confirm stated deadline appears on official domain page (Task 2 & 3).
+    6. Deduplicate by apply_url.
+    7. Compute days_remaining in code, only for confirmed deadlines.
+    8. Cap results at 25 per scan.
     """
     seen_apply_urls: set[str] = set()
     validated: list[Opportunity] = []
@@ -611,7 +653,7 @@ def validate_opportunity_batch(
             log.info("validation.dropped_missing_source_url", title=opp.title)
             continue
 
-        # 4. Deduplicate by apply_url (or source_url fallback)
+        # 6. Deduplicate by apply_url (or source_url fallback)
         apply_key = canonicalize_url(opp.application_url or opp.source_url)
         if not apply_key or apply_key in seen_apply_urls:
             log.info("validation.dropped_duplicate_apply_url", url=apply_key, title=opp.title)
@@ -633,7 +675,14 @@ def validate_opportunity_batch(
             if match_yr:
                 opp.cycle_year = int(match_yr.group(1))
 
-        # 3. Reject any 'confirmed' item whose deadline year does not match cycle_year, and downgrade it to 'estimated'
+        # Task 1: Ungrounded fallback - ungrounded scan must NEVER produce confirmed items
+        if not is_grounded_scan and date_status_str == "confirmed":
+            log.warning("validation.ungrounded_scan_downgrade", title=opp.title)
+            date_status_str = "unknown"
+            opp.conflict = True
+            opp.date_evidence = "Forced to unknown: scan ran ungrounded without search grounding"
+
+        # Task 3: Cycle year check
         if date_status_str == "confirmed":
             if not opp.deadline:
                 date_status_str = "estimated"
@@ -649,8 +698,32 @@ def validate_opportunity_batch(
                 if not opp.estimated_window:
                     opp.estimated_window = f"Projected for {opp.cycle_year} cycle"
                 opp.deadline = None
+                opp.conflict = True
 
-        # 2. Drop items whose confirmed deadline is before today
+        # Task 2 & Task 3: Server-side page verification
+        # A confirmed status strictly requires Task 2 to pass!
+        if date_status_str == "confirmed" and opp.deadline:
+            if verify_pages:
+                verified, new_status, snippet, explanation = await verify_official_page_deadline(
+                    opp.source_url,
+                    opp.deadline,
+                    today_date,
+                    client=client,
+                )
+                opp.fetched_on = today_date
+                if not verified:
+                    date_status_str = new_status
+                    opp.conflict = True
+                    opp.date_evidence = explanation
+                    opp.deadline = None
+                    opp.days_remaining = None
+                else:
+                    date_status_str = "confirmed"
+                    opp.conflict = False
+                    opp.verified_on = today_date
+                    opp.date_evidence = explanation
+
+        # 3. Drop items whose confirmed deadline is before today
         if date_status_str == "confirmed" and opp.deadline and opp.deadline < today_date:
             log.info(
                 "validation.dropped_past_deadline",
@@ -660,7 +733,7 @@ def validate_opportunity_batch(
             )
             continue
 
-        # 5. Compute days_remaining in code, only for confirmed deadlines
+        # 7. Compute days_remaining in code, only for confirmed deadlines
         if date_status_str == "confirmed" and opp.deadline:
             days_rem = (opp.deadline - today_date).days
             if days_rem < 0:
@@ -685,7 +758,7 @@ def validate_opportunity_batch(
         reverse=True,
     )
 
-    # 6. Cap results at 25 per scan
+    # 8. Cap results at 25 per scan
     return validated[:max_cap]
 
 
@@ -742,9 +815,12 @@ async def run_scan(
 
     # 1. Verification-First Gemini Google Search Grounded Scanner
     today_utc = datetime.now(timezone.utc).date()
+    is_grounded_scan = False
     if getattr(settings, "gemini_api_key", ""):
         try:
-            grounded_items = await scan_with_gemini_grounded(profile, settings, today_utc)
+            grounded_items, is_grounded_scan, _ = await scan_with_gemini_grounded(
+                profile, settings, today_utc
+            )
             if grounded_items:
                 all_raw.extend(grounded_items)
                 source_names.append("gemini_search_grounding")
@@ -902,7 +978,13 @@ async def run_scan(
 
     # Task 3: Validation layer in code (do not trust the model)
     valid_candidates = [r for r in results if r]
-    validated_opps = validate_opportunity_batch(valid_candidates, today_utc, max_cap=25)
+    validated_opps = await validate_opportunity_batch(
+        valid_candidates,
+        today_utc,
+        max_cap=25,
+        is_grounded_scan=is_grounded_scan,
+        verify_pages=True,
+    )
 
     # Batch store verified opportunities
     async with get_session() as session:
@@ -1095,6 +1177,7 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
             break
 
     verified_on_val = _parse_date(data.get("verified_on"))
+    fetched_on_val = _parse_date(data.get("fetched_on"))
     raw_cycle = data.get("cycle_year")
     cycle_year_val = None
     if raw_cycle is not None:
@@ -1126,6 +1209,7 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         date_evidence=data.get("date_evidence") or "",
         conflict=bool(data.get("conflict", False)),
         verified_on=verified_on_val,
+        fetched_on=fetched_on_val,
         days_remaining=data.get("days_remaining"),
         source_name=data.get("source_name") or "",
         raw_text=data.get("raw_text") or "",
@@ -1160,6 +1244,7 @@ def _opportunity_to_row_dict(opp: Opportunity, external_id: str) -> dict[str, An
         "date_evidence": opp.date_evidence,
         "conflict": opp.conflict,
         "verified_on": opp.verified_on,
+        "fetched_on": opp.fetched_on,
         "days_remaining": opp.days_remaining,
         "fit_score": opp.fit_score,
         "fit_reason": opp.fit_reason,

@@ -14,7 +14,7 @@ import structlog
 import yaml
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -269,14 +269,54 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self'; "
+            "style-src 'self' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
             "frame-ancestors 'none';"
         )
         return response
+
+    @app.middleware("http")
+    async def basic_auth_middleware(request: Request, call_next):
+        settings = get_settings()
+        if settings.dashboard_password:
+            # Allow public access to health checks
+            if request.url.path in ("/health", "/api/health"):
+                return await call_next(request)
+
+            auth_header = request.headers.get("Authorization")
+            if not auth_header or not auth_header.startswith("Basic "):
+                return Response(
+                    content="Authentication required",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="TodayTech Radar"'},
+                )
+            import base64
+            import secrets
+
+            try:
+                encoded = auth_header.split(" ", 1)[1]
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                username, password = decoded.split(":", 1)
+                correct_username = secrets.compare_digest(
+                    username, settings.dashboard_username or "admin"
+                )
+                correct_password = secrets.compare_digest(password, settings.dashboard_password)
+                if not (correct_username and correct_password):
+                    return Response(
+                        content="Invalid credentials",
+                        status_code=401,
+                        headers={"WWW-Authenticate": 'Basic realm="TodayTech Radar"'},
+                    )
+            except Exception:
+                return Response(
+                    content="Invalid authentication",
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="TodayTech Radar"'},
+                )
+        return await call_next(request)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -353,6 +393,11 @@ def create_app() -> FastAPI:
                 pass
 
     app.router.lifespan_context = lifespan
+
+    @app.get("/health")
+    @app.get("/api/health")
+    async def health_check() -> dict[str, str]:
+        return {"status": "healthy", "service": "todaytech-web"}
 
     @app.get("/", response_class=HTMLResponse)
     async def get_index() -> HTMLResponse:

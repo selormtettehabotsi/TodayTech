@@ -6,6 +6,7 @@ The bot ONLY responds to the Telegram user ID set in TELEGRAM_USER_ID.
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime, timezone
 
 import structlog
@@ -612,6 +613,17 @@ async def start_bot(settings: Settings) -> None:
                 "FATAL: Telegram conflict: Another instance is polling with this bot token. Exiting cleanly.",
                 file=sys.stderr,
             )
+            try:
+                from todaytech.core.alerts import send_telegram_alert
+
+                await send_telegram_alert(
+                    "🚨 *TodayTech Alert: Telegram Polling Conflict*\n\n"
+                    "Another bot instance started polling with this token. "
+                    "Shutting down this instance to avoid update conflicts.",
+                    settings=settings,
+                )
+            except Exception:
+                pass
             stop_event.set()
         else:
             log.error("bot.unhandled_error", error=str(context.error))
@@ -640,6 +652,17 @@ async def start_bot(settings: Settings) -> None:
             "FATAL: Another bot instance is currently active with this token. Exiting cleanly to avoid polling conflicts.",
             file=sys.stderr,
         )
+        try:
+            from todaytech.core.alerts import send_telegram_alert
+
+            await send_telegram_alert(
+                "🚨 *TodayTech Alert: Startup Polling Conflict*\n\n"
+                "A conflicting bot process is already actively polling Telegram with this bot token. "
+                "The new instance is terminating immediately.",
+                settings=settings,
+            )
+        except Exception:
+            pass
         sys.exit(1)
     except Exception as exc:
         log.warning("bot.startup_probe_warning", error=str(exc))

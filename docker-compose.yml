@@ -20,15 +20,17 @@ services:
       - PYTHONUNBUFFERED=1
     command: ["run"]
 
-  # Web Dashboard Interface (accessible via browser)
+  # Web Dashboard Interface (accessible via reverse proxy)
   todaytech-web:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: todaytech-web
     restart: unless-stopped
+    expose:
+      - "8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     volumes:
@@ -43,3 +45,24 @@ services:
       - ENABLE_BOT_IN_WEB=0
       - PYTHONUNBUFFERED=1
     command: ["web", "--host", "0.0.0.0", "--port", "8000"]
+
+  # HTTPS Reverse Proxy (Caddy with automatic Let's Encrypt TLS)
+  caddy:
+    image: caddy:2-alpine
+    container_name: todaytech-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - todaytech-web
+
+volumes:
+  caddy_data:
+  caddy_config:

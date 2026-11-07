@@ -178,6 +178,7 @@ class Opportunity(BaseModel):
     date_evidence: str = ""
     conflict: bool = False
     verified_on: date | None = None
+    fetched_on: date | None = None
     days_remaining: int | None = None
 
     # Enriched fields (post-processing)
@@ -216,6 +217,7 @@ class DigestItem(BaseModel):
     estimated_window: str | None = None
     source_url: str = ""
     verified_on: date | None = None
+    fetched_on: date | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -237,6 +237,7 @@ async def test_api_date_status_and_security_headers():
         assert res.status_code == 200
         assert res.headers.get("x-frame-options") == "DENY"
         assert "frame-ancestors 'none'" in res.headers.get("content-security-policy", "")
+        assert "unsafe-inline" not in res.headers.get("content-security-policy", "")
 
         # Check opportunities list
         res_opps = await client.get("/api/opportunities?status=radar")
@@ -260,3 +261,33 @@ async def test_api_date_status_and_security_headers():
         assert eth["days_left"] is not None
         assert eth["days_left"] > 0
         assert eth["source_url"] == "https://ethglobal.com"
+
+
+@pytest.mark.asyncio
+async def test_api_basic_auth_protection(monkeypatch):
+    """Verify that when DASHBOARD_PASSWORD is set, access requires valid basic auth credentials."""
+    import base64
+
+    from todaytech.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "dashboard_username", "selorm")
+    monkeypatch.setattr(settings, "dashboard_password", "supersecret123")
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Unauthenticated request must return 401
+        res = await client.get("/api/stats")
+        assert res.status_code == 401
+        assert "Basic" in res.headers.get("www-authenticate", "")
+
+        # 2. Invalid credentials must return 401
+        bad_creds = base64.b64encode(b"selorm:wrongpass").decode("utf-8")
+        res_bad = await client.get("/api/stats", headers={"Authorization": f"Basic {bad_creds}"})
+        assert res_bad.status_code == 401
+
+        # 3. Valid credentials must succeed with 200
+        good_creds = base64.b64encode(b"selorm:supersecret123").decode("utf-8")
+        res_good = await client.get("/api/stats", headers={"Authorization": f"Basic {good_creds}"})
+        assert res_good.status_code == 200
