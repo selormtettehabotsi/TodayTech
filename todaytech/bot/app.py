@@ -581,7 +581,6 @@ def _format_details(opp) -> str:
 async def start_bot(settings: Settings) -> None:
     """Start the Telegram bot and scheduler."""
     import asyncio
-    import sys
 
     settings.validate_runtime(require_search_and_llm=False)
     app = Application.builder().token(settings.telegram_bot_token).build()
