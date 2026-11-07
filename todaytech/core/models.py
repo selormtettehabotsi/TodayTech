@@ -181,6 +181,7 @@ class Opportunity(BaseModel):
             if v_str.startswith("[") and v_str.endswith("]"):
                 try:
                     import json
+
                     parsed = json.loads(v_str)
                     if isinstance(parsed, list):
                         return [str(item) for item in parsed]
