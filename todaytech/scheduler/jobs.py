@@ -6,18 +6,180 @@ Deadline reminders fire at 7, 3, and 1 day(s) before each deadline.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dt_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 from telegram.ext import Application
 
 from todaytech.core.config import Settings
 from todaytech.core.models import UserProfile
 
 log = structlog.get_logger()
+
+
+async def reverify_opportunity(
+    opp: Any,
+    today: date,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[bool, str]:
+    """Re-verify a single opportunity against its official page.
+
+    Returns (downgraded: bool, status_message: str).
+    """
+    if not opp.source_url:
+        opp.date_status = "unknown"
+        opp.conflict = True
+        opp.date_evidence = f"Re-verification on {today}: Missing source_url."
+        opp.verified_on = today
+        opp.deadline = None
+        opp.days_remaining = None
+        return True, "downgraded_no_source_url"
+
+    should_close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=10, follow_redirects=True)
+        should_close_client = True
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        resp = await client.get(opp.source_url, headers=headers)
+        if resp.status_code in (404, 410):
+            opp.date_status = "unknown"
+            opp.conflict = True
+            opp.date_evidence = (
+                f"Re-verification on {today}: Official page returned HTTP {resp.status_code}."
+            )
+            opp.verified_on = today
+            opp.deadline = None
+            opp.days_remaining = None
+            return True, f"downgraded_http_{resp.status_code}"
+
+        if resp.status_code >= 400:
+            return False, f"skipped_http_{resp.status_code}"
+
+        text = resp.text.lower()
+        # Check closed keywords
+        closed_signals = [
+            "applications are now closed",
+            "applications closed",
+            "submissions are now closed",
+            "submission has closed",
+            "registration is closed",
+            "this program has concluded",
+            "applications have ended",
+        ]
+        if any(sig in text for sig in closed_signals):
+            opp.date_status = "unknown"
+            opp.conflict = True
+            opp.date_evidence = (
+                f"Re-verification on {today}: Official page stated applications closed."
+            )
+            opp.verified_on = today
+            opp.deadline = None
+            opp.days_remaining = None
+            return True, "downgraded_closed"
+
+        # If it was confirmed with a deadline, verify deadline is still present on page
+        if opp.date_status == "confirmed" and opp.deadline:
+            deadline_str = opp.deadline.strftime("%Y-%m-%d")
+            month_name = opp.deadline.strftime("%B").lower()
+            day_str = str(opp.deadline.day)
+
+            date_found = deadline_str in text or (
+                month_name in text and (day_str in text or f"{day_str}," in text)
+            )
+
+            # Check if page prominently features a past closed cycle instead
+            past_closed_indicators = [
+                "applications for 2024",
+                "applications for 2025",
+                "2024 cohort has ended",
+                "2025 cohort has ended",
+            ]
+            has_past_closed = any(p in text for p in past_closed_indicators)
+
+            if not date_found or has_past_closed:
+                opp.date_status = "estimated"
+                opp.conflict = True
+                opp.date_evidence = f"Re-verification on {today}: Official page no longer confirms deadline {opp.deadline}."
+                opp.verified_on = today
+                opp.deadline = None
+                opp.days_remaining = None
+                return True, "downgraded_deadline_missing"
+            else:
+                opp.conflict = False
+                opp.verified_on = today
+                opp.days_remaining = (opp.deadline - today).days
+                return False, "confirmed_valid"
+
+        opp.verified_on = today
+        return False, "unchanged"
+
+    except Exception as exc:
+        log.warning("reverify.item_failed", title=opp.title, error=str(exc))
+        return False, f"error_{exc}"
+    finally:
+        if should_close_client:
+            await client.aclose()
+
+
+async def reverify_opportunities(
+    session: AsyncSession,
+    today: date,
+    force_all: bool = False,
+) -> dict[str, int]:
+    """Re-verify items closing within 14 days daily, and all other items weekly."""
+    from sqlalchemy import and_, or_, select
+
+    from todaytech.core.database import OpportunityRow
+
+    if force_all:
+        stmt = select(OpportunityRow).where(OpportunityRow.is_scam.is_(False))
+    else:
+        cutoff_7d = today - timedelta(days=7)
+        stmt = (
+            select(OpportunityRow)
+            .where(OpportunityRow.is_scam.is_(False))
+            .where(
+                or_(
+                    and_(
+                        OpportunityRow.date_status == "confirmed",
+                        OpportunityRow.deadline.is_not(None),
+                        OpportunityRow.deadline <= today + timedelta(days=14),
+                        or_(
+                            OpportunityRow.verified_on.is_(None), OpportunityRow.verified_on < today
+                        ),
+                    ),
+                    or_(
+                        OpportunityRow.verified_on.is_(None),
+                        OpportunityRow.verified_on <= cutoff_7d,
+                    ),
+                )
+            )
+        )
+
+    result = await session.execute(stmt)
+    opps = list(result.scalars().all())
+
+    stats = {"checked": len(opps), "downgraded": 0, "confirmed": 0}
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for opp in opps:
+            downgraded, _ = await reverify_opportunity(opp, today, client)
+            if downgraded:
+                stats["downgraded"] += 1
+            elif opp.date_status == "confirmed":
+                stats["confirmed"] += 1
+
+    await session.commit()
+    log.info("reverification.completed", **stats)
+    return stats
 
 
 def setup_scheduler(
@@ -58,6 +220,28 @@ def setup_scheduler(
         name="deadline_reminders",
     )
     log.info("scheduler.deadline_reminders_set")
+
+    # Re-verification job every 24 hours (closing within 14d daily, others weekly)
+    job_queue.run_repeating(
+        _reverification_job,
+        interval=timedelta(hours=24),
+        first=timedelta(minutes=10),
+        data={"settings": settings},
+        name="opportunity_reverification",
+    )
+    log.info("scheduler.reverification_set")
+
+
+async def _reverification_job(context: Any) -> None:
+    """Job: periodic opportunity re-verification."""
+    try:
+        from todaytech.core.database import get_session
+
+        today = datetime.now(timezone.utc).date()
+        async with get_session() as session:
+            await reverify_opportunities(session, today)
+    except Exception as exc:
+        log.error("scheduler.reverification_failed", error=str(exc))
 
 
 async def _daily_digest_job(context: Any) -> None:

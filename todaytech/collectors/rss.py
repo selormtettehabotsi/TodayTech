@@ -40,7 +40,9 @@ class RSSCollector(Collector):
         feeds = list(DEFAULT_FEEDS)
         feeds.extend(self._load_user_feeds())
 
-        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers=_HEADERS) as client:
+        async with httpx.AsyncClient(
+            timeout=6.0, follow_redirects=True, headers=_HEADERS
+        ) as client:
             for feed_url in feeds:
                 try:
                     resp = await client.get(feed_url)

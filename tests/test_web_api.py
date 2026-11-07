@@ -212,6 +212,7 @@ async def test_api_multiple_application_rows():
         assert data["id"] == "d41c7b2e9a0f5c63"
         assert data["has_drafts"] is True
 
+
 @pytest.mark.asyncio
 async def test_api_scan_status():
     """Verify that /api/scan/status returns running state and no-cache headers."""
@@ -223,3 +224,39 @@ async def test_api_scan_status():
         data = res.json()
         assert "running" in data
         assert "no-cache" in res.headers.get("cache-control", "")
+
+
+@pytest.mark.asyncio
+async def test_api_date_status_and_security_headers():
+    """Verify Task 5 requirements: security headers, GSoC estimated with no days_left countdown, confirmed items have days_left."""
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Check security headers
+        res = await client.get("/api/stats")
+        assert res.status_code == 200
+        assert res.headers.get("x-frame-options") == "DENY"
+        assert "frame-ancestors 'none'" in res.headers.get("content-security-policy", "")
+
+        # Check opportunities list
+        res_opps = await client.get("/api/opportunities?status=radar")
+        assert res_opps.status_code == 200
+        opps = res_opps.json()
+
+        # Find GSoC 2027
+        gsoc = next((o for o in opps if "Google Summer of Code" in o["title"]), None)
+        assert gsoc is not None
+        assert gsoc["date_status"] == "estimated"
+        assert gsoc["deadline"] is None
+        assert gsoc["days_left"] is None
+        assert gsoc["estimated_window"] is not None
+        assert gsoc["source_url"] == "https://summerofcode.withgoogle.com"
+
+        # Find ETHGlobal (confirmed)
+        eth = next((o for o in opps if "ETHGlobal" in o["title"]), None)
+        assert eth is not None
+        assert eth["date_status"] == "confirmed"
+        assert eth["deadline"] is not None
+        assert eth["days_left"] is not None
+        assert eth["days_left"] > 0
+        assert eth["source_url"] == "https://ethglobal.com"

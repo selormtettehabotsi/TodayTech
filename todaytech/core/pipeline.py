@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -28,7 +28,13 @@ from todaytech.core.database import (
 )
 from todaytech.core.eligibility import check_eligibility, rule_check
 from todaytech.core.llm import LLMClient, create_llm_client_from_settings
-from todaytech.core.models import EligibilityVerdict, Opportunity, OpportunityType, UserProfile
+from todaytech.core.models import (
+    DateStatus,
+    EligibilityVerdict,
+    Opportunity,
+    OpportunityType,
+    UserProfile,
+)
 from todaytech.core.scam_filter import check_scam
 from todaytech.core.scoring import compute_fit_score
 
@@ -463,6 +469,227 @@ def _extract_metadata_fallback(item: dict[str, Any], today_utc: date) -> dict[st
 
 
 # ---------------------------------------------------------------------------
+# Grounded Scanner Prompt & Validation Layer
+# ---------------------------------------------------------------------------
+
+SCANNER_PROMPT_TEMPLATE = """Today's date is {today} ({timezone}). You are a verification-first opportunity scanner. Use Google Search for every opportunity. Never use memory or training data for dates.
+
+PROFILE: {name}, {level} in {field_of_study} at {university}, {country} (Citizenship: {citizenship}).
+FIELDS: {fields}
+TYPES: {types}
+
+THE CORE RULE
+A date is "confirmed" only if you read it on the organiser's official page for the CURRENT cycle. Never take a previous year's date and change the year. If the official page shows an older cycle, or no dates, the date is NOT confirmed.
+
+DATE STATUS (required on every item)
+- confirmed: dates read on the official page for the current cycle.
+- estimated: dates not yet published. Set "deadline" to null and describe the likely window in "estimated_window" (for example "likely late March 2027, based on the 2026 cycle").
+- rolling: applications reviewed continuously. Set "deadline" to null.
+- unknown: no usable date found.
+
+RULES
+1. Include only opportunities that are open now or expected to open. Exclude anything whose confirmed deadline is before {today}.
+2. Open the official page for each item. Use blogs and aggregators only to discover leads, never as the source of dates. If two sources disagree, return both dates and set "conflict": true.
+3. Check eligibility for a {country} undergraduate. If the programme excludes {country} or requires a different level, exclude it.
+4. Calculate days_remaining only for confirmed deadlines. Otherwise use null.
+5. Give a match score only after eligibility is checked, with a one-sentence reason.
+6. Return at most 25 items. Quality over quantity.
+7. Before finalising, re-open the official link for every item with date_status "confirmed" and make sure the dates still match.
+
+Return ONLY a JSON array. Each item:
+{{
+  "name": "",
+  "organisation": "",
+  "type": "hackathon | internship | scholarship | fellowship | grant | program | competition | ambassador",
+  "field": "",
+  "date_status": "confirmed | estimated | rolling | unknown",
+  "opens": "YYYY-MM-DD or null",
+  "deadline": "YYYY-MM-DD or null",
+  "estimated_window": "string or null",
+  "program_start": "YYYY-MM-DD or null",
+  "days_remaining": null,
+  "cycle_year": 2026,
+  "date_evidence": "one sentence in your own words saying what the official page states",
+  "conflict": false,
+  "eligibility": "",
+  "funding": "",
+  "apply_url": "",
+  "source_url": "official page where dates were read",
+  "match_score": 0,
+  "match_reason": "",
+  "verified_on": "{today}"
+}}
+"""
+
+
+async def scan_with_gemini_grounded(
+    profile: UserProfile,
+    settings: Any,
+    today_utc: date | None = None,
+) -> list[dict[str, Any]]:
+    """Scan and verify opportunities using Gemini with Google Search grounding."""
+    if not getattr(settings, "gemini_api_key", ""):
+        return []
+
+    if today_utc is None:
+        today_utc = datetime.now(timezone.utc).date()
+
+    today_str = today_utc.strftime("%Y-%m-%d")
+    timezone_str = "GMT 0:00"
+
+    prompt = SCANNER_PROMPT_TEMPLATE.format(
+        today=today_str,
+        timezone=timezone_str,
+        name=profile.name or "Student",
+        level=profile.level or "undergraduate",
+        field_of_study=profile.field_of_study or "Computer Science",
+        university=profile.university or "University",
+        country=profile.country or "Ghana",
+        citizenship=", ".join(profile.citizenship) or profile.country or "Ghana",
+        fields=", ".join(
+            profile.interests or ["Computer Science", "Software Engineering", "AI/ML", "Cloud"]
+        ),
+        types=", ".join(
+            profile.opportunity_types
+            or ["hackathon", "internship", "scholarship", "fellowship", "ambassador"]
+        ),
+    )
+
+    try:
+        llm = create_llm_client_from_settings(settings)
+        items = await llm.generate_grounded_json_array(
+            prompt,
+            system="You are a verification-first opportunity scanner. Rely strictly on Google Search for current dates.",
+        )
+        log.info("gemini_grounded_scanner.success", count=len(items))
+        return items
+    except Exception as exc:
+        log.warning("gemini_grounded_scanner.failed", error=str(exc))
+        return []
+
+
+def validate_opportunity_batch(
+    raw_items: Sequence[dict[str, Any] | Opportunity],
+    today_date: date,
+    max_cap: int = 25,
+) -> list[Opportunity]:
+    """Strict validation layer that does not trust the LLM or raw sources.
+
+    1. Drop items with no source_url.
+    2. Drop items whose confirmed deadline is before today.
+    3. Reject any 'confirmed' item whose deadline year does not match cycle_year, and downgrade it to 'estimated'.
+    4. Deduplicate by apply_url.
+    5. Compute days_remaining in code, only for confirmed deadlines.
+    6. Cap results at 25 per scan.
+    """
+    seen_apply_urls: set[str] = set()
+    validated: list[Opportunity] = []
+
+    for raw in raw_items:
+        if isinstance(raw, Opportunity):
+            opp = raw
+        else:
+            data = dict(raw)
+            if "name" in data and "title" not in data:
+                data["title"] = data["name"]
+            if "organisation" in data and "organizer" not in data:
+                data["organizer"] = data["organisation"]
+            if "apply_url" in data and "application_url" not in data:
+                data["application_url"] = data["apply_url"]
+            if "match_score" in data and "fit_score" not in data:
+                try:
+                    data["fit_score"] = int(data["match_score"])
+                except Exception:
+                    data["fit_score"] = 0
+            if "match_reason" in data and "fit_reason" not in data:
+                data["fit_reason"] = data["match_reason"]
+            opp = _dict_to_opportunity(data)
+
+        # 1. Drop items with no source_url
+        src_url = str(opp.source_url or "").strip()
+        if not src_url or src_url.lower() in ("none", "null", "n/a", "undefined", "#"):
+            log.info("validation.dropped_missing_source_url", title=opp.title)
+            continue
+
+        # 4. Deduplicate by apply_url (or source_url fallback)
+        apply_key = canonicalize_url(opp.application_url or opp.source_url)
+        if not apply_key or apply_key in seen_apply_urls:
+            log.info("validation.dropped_duplicate_apply_url", url=apply_key, title=opp.title)
+            continue
+        seen_apply_urls.add(apply_key)
+
+        # Normalize date_status
+        date_status_str = (
+            opp.date_status.value
+            if hasattr(opp.date_status, "value")
+            else str(opp.date_status or "unknown")
+        ).lower()
+        if date_status_str not in ("confirmed", "estimated", "rolling", "unknown"):
+            date_status_str = "unknown"
+
+        # Deduce cycle_year from title regex if missing and title has e.g. 2026/2027
+        if opp.cycle_year is None:
+            match_yr = re.search(r"\b(202\d)\b", opp.title)
+            if match_yr:
+                opp.cycle_year = int(match_yr.group(1))
+
+        # 3. Reject any 'confirmed' item whose deadline year does not match cycle_year, and downgrade it to 'estimated'
+        if date_status_str == "confirmed":
+            if not opp.deadline:
+                date_status_str = "estimated"
+                opp.deadline = None
+            elif opp.cycle_year is not None and opp.deadline.year != opp.cycle_year:
+                log.info(
+                    "validation.cycle_year_mismatch_downgraded",
+                    title=opp.title,
+                    deadline_year=opp.deadline.year,
+                    cycle_year=opp.cycle_year,
+                )
+                date_status_str = "estimated"
+                if not opp.estimated_window:
+                    opp.estimated_window = f"Projected for {opp.cycle_year} cycle"
+                opp.deadline = None
+
+        # 2. Drop items whose confirmed deadline is before today
+        if date_status_str == "confirmed" and opp.deadline and opp.deadline < today_date:
+            log.info(
+                "validation.dropped_past_deadline",
+                title=opp.title,
+                deadline=str(opp.deadline),
+                today=str(today_date),
+            )
+            continue
+
+        # 5. Compute days_remaining in code, only for confirmed deadlines
+        if date_status_str == "confirmed" and opp.deadline:
+            days_rem = (opp.deadline - today_date).days
+            if days_rem < 0:
+                continue
+            opp.days_remaining = days_rem
+        else:
+            opp.days_remaining = None
+
+        opp.date_status = DateStatus(date_status_str)
+        if not opp.verified_on:
+            opp.verified_on = today_date
+
+        validated.append(opp)
+
+    # Sort with confirmed items having nearest deadlines first, followed by fit score
+    validated.sort(
+        key=lambda o: (
+            1 if o.date_status == DateStatus.CONFIRMED else 0,
+            o.fit_score,
+            -(o.days_remaining if o.days_remaining is not None else 9999),
+        ),
+        reverse=True,
+    )
+
+    # 6. Cap results at 25 per scan
+    return validated[:max_cap]
+
+
+# ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
 
@@ -513,6 +740,18 @@ async def run_scan(
     errors: list[str] = []
     source_names: list[str] = []
 
+    # 1. Verification-First Gemini Google Search Grounded Scanner
+    today_utc = datetime.now(timezone.utc).date()
+    if getattr(settings, "gemini_api_key", ""):
+        try:
+            grounded_items = await scan_with_gemini_grounded(profile, settings, today_utc)
+            if grounded_items:
+                all_raw.extend(grounded_items)
+                source_names.append("gemini_search_grounding")
+        except Exception as g_err:
+            errors.append(f"gemini_search_grounding: {g_err}")
+            log.warning("scan.gemini_grounding_error", error=str(g_err))
+
     for collector in collectors:
         try:
             items = await collector.safe_collect(queries)
@@ -555,7 +794,9 @@ async def run_scan(
     sem = asyncio.Semaphore(4)
     llm_quota_available = True
 
-    async def _process_single_item(item: dict[str, Any], can_use_llm: bool) -> dict[str, Any] | None:
+    async def _process_single_item(
+        item: dict[str, Any], can_use_llm: bool
+    ) -> dict[str, Any] | None:
         nonlocal llm_quota_available
         async with sem:
             try:
@@ -659,25 +900,35 @@ async def run_scan(
 
     results = await asyncio.gather(*tasks)
 
+    # Task 3: Validation layer in code (do not trust the model)
+    valid_candidates = [r for r in results if r]
+    validated_opps = validate_opportunity_batch(valid_candidates, today_utc, max_cap=25)
+
     # Batch store verified opportunities
     async with get_session() as session:
-        for row_data in results:
-            if row_data:
-                _, is_new = await upsert_opportunity(session, row_data)
-                if is_new:
-                    new_count += 1
+        for opp in validated_opps:
+            ext_id = opp.id or generate_external_id(opp.model_dump())
+            row_data = _opportunity_to_row_dict(opp, ext_id)
+            _, is_new = await upsert_opportunity(session, row_data)
+            if is_new:
+                new_count += 1
         await session.commit()
 
-    # Auto-purge any legacy expired opportunities from active database
+    # Auto-purge any confirmed opportunities whose deadline has passed
     try:
-        from sqlalchemy import delete, select
+        from sqlalchemy import and_, delete, select
 
         from todaytech.core.database import OpportunityRow, UserStateRow
 
         async with get_session() as session:
             cleanup_stmt = (
                 delete(OpportunityRow)
-                .where(OpportunityRow.deadline < today_utc)
+                .where(
+                    and_(
+                        OpportunityRow.date_status == "confirmed",
+                        OpportunityRow.deadline < today_utc,
+                    )
+                )
                 .where(
                     ~OpportunityRow.external_id.in_(
                         select(UserStateRow.opportunity_id).where(UserStateRow.status == "applied")
@@ -836,6 +1087,22 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         parts = data["deadline"].split(sep)
         start_val = _parse_date(parts[0])
 
+    date_status_val = str(data.get("date_status", "unknown")).lower()
+    date_status = DateStatus.UNKNOWN
+    for ds in DateStatus:
+        if ds.value == date_status_val:
+            date_status = ds
+            break
+
+    verified_on_val = _parse_date(data.get("verified_on"))
+    raw_cycle = data.get("cycle_year")
+    cycle_year_val = None
+    if raw_cycle is not None:
+        try:
+            cycle_year_val = int(raw_cycle)
+        except (ValueError, TypeError):
+            cycle_year_val = None
+
     return Opportunity(
         title=data.get("title") or "Unknown",
         type=opp_type,
@@ -853,6 +1120,13 @@ def _dict_to_opportunity(data: dict[str, Any]) -> Opportunity:
         application_url=data.get("application_url") or "",
         source_url=data.get("source_url") or "",
         confidence=float(data.get("confidence", 0.5) or 0.5),
+        date_status=date_status,
+        estimated_window=data.get("estimated_window"),
+        cycle_year=cycle_year_val,
+        date_evidence=data.get("date_evidence") or "",
+        conflict=bool(data.get("conflict", False)),
+        verified_on=verified_on_val,
+        days_remaining=data.get("days_remaining"),
         source_name=data.get("source_name") or "",
         raw_text=data.get("raw_text") or "",
     )
@@ -878,6 +1152,15 @@ def _opportunity_to_row_dict(opp: Opportunity, external_id: str) -> dict[str, An
         "application_url": opp.application_url,
         "source_url": opp.source_url,
         "confidence": opp.confidence,
+        "date_status": opp.date_status.value
+        if hasattr(opp.date_status, "value")
+        else str(opp.date_status or "unknown"),
+        "estimated_window": opp.estimated_window,
+        "cycle_year": opp.cycle_year,
+        "date_evidence": opp.date_evidence,
+        "conflict": opp.conflict,
+        "verified_on": opp.verified_on,
+        "days_remaining": opp.days_remaining,
         "fit_score": opp.fit_score,
         "fit_reason": opp.fit_reason,
         "eligibility_verdict": opp.eligibility_verdict.value,

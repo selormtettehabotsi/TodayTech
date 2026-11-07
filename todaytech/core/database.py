@@ -59,6 +59,16 @@ class OpportunityRow(Base):
     application_url: Mapped[str] = mapped_column(String(1024), default="")
     source_url: Mapped[str] = mapped_column(String(1024), default="")
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Verification & Date Confidence fields
+    date_status: Mapped[str] = mapped_column(String(32), default="unknown")
+    estimated_window: Mapped[str | None] = mapped_column(String(256), nullable=True, default=None)
+    cycle_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    date_evidence: Mapped[str] = mapped_column(Text, default="")
+    conflict: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_on: Mapped[date | None] = mapped_column(nullable=True, default=None)
+    days_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     fit_score: Mapped[int] = mapped_column(Integer, default=0)
     fit_reason: Mapped[str] = mapped_column(Text, default="")
     eligibility_verdict: Mapped[str] = mapped_column(String(32), default="Check")
@@ -140,6 +150,58 @@ class SourceRow(Base):
 # ---------------------------------------------------------------------------
 
 
+def _migrate_schema(connection) -> None:
+    """Ensure all required columns exist and migrate existing rows."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(connection)
+    existing_tables = inspector.get_table_names()
+    if "opportunities" not in existing_tables:
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("opportunities")}
+
+    alter_statements = []
+    if "date_status" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN date_status VARCHAR(32) DEFAULT 'unknown'"
+        )
+    if "estimated_window" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN estimated_window VARCHAR(256)"
+        )
+    if "cycle_year" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN cycle_year INTEGER")
+    if "date_evidence" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN date_evidence TEXT DEFAULT ''"
+        )
+    if "conflict" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN conflict BOOLEAN DEFAULT 0")
+    if "source_url" not in columns:
+        alter_statements.append(
+            "ALTER TABLE opportunities ADD COLUMN source_url VARCHAR(1024) DEFAULT ''"
+        )
+    if "verified_on" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN verified_on DATE")
+    if "days_remaining" not in columns:
+        alter_statements.append("ALTER TABLE opportunities ADD COLUMN days_remaining INTEGER")
+
+    for stmt in alter_statements:
+        try:
+            connection.execute(text(stmt))
+        except Exception as exc:
+            log.warning("database.migration_column_error", stmt=stmt, error=str(exc))
+
+    # Task 1: Set every existing row to "unknown" until it is re-verified
+    try:
+        connection.execute(
+            text("UPDATE opportunities SET date_status = 'unknown' WHERE verified_on IS NULL")
+        )
+    except Exception as exc:
+        log.warning("database.migration_update_error", error=str(exc))
+
+
 async def init_db(database_url: str) -> None:
     """Create engine, session factory, and all tables."""
     global _engine, _session_factory
@@ -159,6 +221,7 @@ async def init_db(database_url: str) -> None:
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_schema)
 
     log.info("database.initialized", url=database_url.split("://")[0] + "://***")
 

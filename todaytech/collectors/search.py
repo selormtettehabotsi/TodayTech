@@ -45,7 +45,9 @@ class SearchCollector(Collector):
             except Exception as exc:
                 log.warning("search.query_failed", collector=self.name, query=query, error=str(exc))
                 err_lower = str(exc).lower()
-                if any(w in err_lower for w in ("quota", "429", "401", "402", "exhausted", "credit")):
+                if any(
+                    w in err_lower for w in ("quota", "429", "401", "402", "exhausted", "credit")
+                ):
                     log.info("search.provider_stopped_quota_limit", collector=self.name)
                     self._exhausted = True
                     break

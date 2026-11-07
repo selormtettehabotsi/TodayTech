@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import structlog
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -110,13 +111,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "I find active hackathons, scholarships, internships, fellowships, and student ambassador "
         "programs tailored specifically to your profile (all dates in GMT 0:00).\n\n"
         "⚡ *Commands you can tap:* \n"
-        "• /update — run a live scan and get today's top opportunities\n"
+        "• /update — run a live grounded scan across official sources\n"
+        "• /deadlines — see upcoming confirmed deadlines (sorted nearest first)\n"
+        "• /estimated — see opportunities with projected or TBA dates\n"
         "• /saved — view your saved application pipeline\n"
-        "• /deadlines — see upcoming closing deadlines\n"
-        "• `/details <id>` — full eligibility breakdown & links\n"
+        "• `/details <id>` — full verification breakdown, official source & links\n"
         "• `/apply <id>` — prepare tailored CV, SOP & answers\n"
         "• `/help` — view this help menu\n\n"
         "💬 *Or just send me messages:* \n"
+        "• `deadlines` or `estimated`\n"
         "• `only hackathons` or `only scholarships`\n"
         "• `save <id>` to bookmark an opportunity\n"
         "• `ignore <id>` to hide from your feed",
@@ -310,15 +313,19 @@ async def cmd_saved(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @auth_required
 async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle 'deadlines' — show upcoming deadlines."""
+    """Handle 'deadlines' — show upcoming confirmed deadlines."""
     from sqlalchemy import select
 
     from todaytech.core.database import OpportunityRow
 
+    today = datetime.now(timezone.utc).date()
     async with get_session() as session:
         stmt = (
             select(OpportunityRow)
-            .where(OpportunityRow.deadline >= datetime.now(timezone.utc).date())
+            .where(
+                OpportunityRow.deadline >= today,
+                OpportunityRow.date_status == "confirmed",
+            )
             .order_by(OpportunityRow.deadline.asc())
             .limit(20)
         )
@@ -326,13 +333,62 @@ async def cmd_deadlines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         opps = list(result.scalars().all())
 
     if not opps:
-        await update.message.reply_text("📭 No upcoming deadlines found.")
+        await update.message.reply_text(
+            "📭 No upcoming confirmed deadlines found.\n"
+            "Try `/update` to scan or `/estimated` to view programs with upcoming estimated cycles.",
+            parse_mode="Markdown",
+        )
         return
 
-    lines = ["📅 **Upcoming Deadlines**\n"]
+    lines = ["📅 **Upcoming Confirmed Deadlines (GMT 0:00)**\n"]
     for opp in opps:
-        days_left = (opp.deadline - datetime.now(timezone.utc).date()).days if opp.deadline else "?"
-        lines.append(f"• **{opp.title}** — {opp.deadline} ({days_left}d) `{opp.external_id[:8]}`")
+        days_left = (opp.deadline - today).days if opp.deadline else "?"
+        lines.append(
+            f"• **{opp.title}**\n  Deadline: `{opp.deadline}` ({days_left}d left) • ID: `{opp.external_id[:8]}`"
+        )
+    lines.append("\n💡 Use `/details <id>` to view official source verification.")
+    await _send_long(update, "\n".join(lines))
+
+
+@auth_required
+async def cmd_estimated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle '/estimated' — list opportunities whose dates are not yet published."""
+    from sqlalchemy import or_, select
+
+    from todaytech.core.database import OpportunityRow
+
+    async with get_session() as session:
+        stmt = (
+            select(OpportunityRow)
+            .where(
+                or_(
+                    OpportunityRow.date_status == "estimated",
+                    OpportunityRow.date_status == "unknown",
+                )
+            )
+            .order_by(OpportunityRow.fit_score.desc())
+            .limit(20)
+        )
+        result = await session.execute(stmt)
+        opps = list(result.scalars().all())
+
+    if not opps:
+        await update.message.reply_text("📭 No estimated or pending opportunities found.")
+        return
+
+    lines = [
+        "⏳ **Estimated / Projected Opportunities**\nOfficial current-cycle dates are not yet published:\n"
+    ]
+    for opp in opps:
+        status_label = (opp.date_status or "unknown").upper()
+        window = opp.estimated_window or "Expected window TBA"
+        lines.append(
+            f"• **{opp.title}** `[{status_label}]`\n"
+            f"  Window: {window}\n"
+            f"  Source: {opp.source_url or 'None'}\n"
+            f"  ID: `{opp.external_id[:8]}`\n"
+        )
+    lines.append("💡 Use `/details <id>` to view full verification details.")
     await _send_long(update, "\n".join(lines))
 
 
@@ -379,7 +435,9 @@ async def cmd_apply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                                 caption=f"📄 {docx_file.stem.replace('_', ' ').title()}",
                             )
                     except Exception as doc_err:
-                        log.warning("bot.send_doc_failed", error=str(doc_err), filename=docx_file.name)
+                        log.warning(
+                            "bot.send_doc_failed", error=str(doc_err), filename=docx_file.name
+                        )
     except Exception as exc:
         log.error("bot.apply_failed", error=str(exc))
         await update.message.reply_text(f"❌ Application assistant failed: {exc}")
@@ -429,6 +487,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return await cmd_saved(update, context)
     elif text in ("deadlines", "upcoming"):
         return await cmd_deadlines(update, context)
+    elif text in ("estimated", "tba", "projected"):
+        return await cmd_estimated(update, context)
     elif text.startswith("add source"):
         return await cmd_add_source(update, context)
     elif text in ("help", "start", "menu"):
@@ -437,11 +497,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "🤔 I didn't understand that. Try:\n"
             "• `/update` — run scan & get today's digest\n"
+            "• `/deadlines` — upcoming confirmed closing dates\n"
+            "• `/estimated` — opportunities with projected/TBA dates\n"
             "• `only hackathons` or `only scholarships`\n"
-            "• `/details <id>`\n"
+            "• `/details <id>` — verification breakdown & official links\n"
             "• `/apply <id>` — prepare tailored draft\n"
             "• `/saved` — your saved opportunities\n"
-            "• `/deadlines` — upcoming closing dates\n"
             "• `/help` — view full command menu",
             parse_mode="Markdown",
         )
@@ -454,17 +515,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def _format_details(opp) -> str:
     """Format full details of an opportunity."""
+    date_status_str = (opp.date_status or "unknown").upper()
     lines = [
         f"📋 **{opp.title}**\n",
         f"🆔 `{opp.external_id}`",
         f"📌 Type: {opp.type.capitalize()}",
         f"🏢 Organizer: {opp.organizer or 'Not stated'}",
-        f"📅 Deadline: {opp.deadline or 'Not stated'}",
-        f"📅 Start: {opp.start_date or 'Not stated'}",
-        f"📍 Location: {opp.location or 'Not stated'} ({opp.mode or 'N/A'})",
-        f"💰 Cost: {'Free' if opp.cost == 0 else f'${opp.cost:.0f}'}",
-        f"🎁 Reward: {opp.reward or 'Not stated'}",
+        f"🛡️ Date Status: `{date_status_str}`",
     ]
+
+    if opp.date_status == "confirmed" and opp.deadline:
+        today = datetime.now(timezone.utc).date()
+        days_left = (opp.deadline - today).days
+        lines.append(f"📅 Confirmed Deadline: `{opp.deadline}` (GMT 0:00, {days_left}d left)")
+    elif opp.estimated_window:
+        lines.append(f"⏳ Estimated Window: {opp.estimated_window}")
+    elif opp.deadline:
+        lines.append(f"📅 Deadline: `{opp.deadline}` (GMT 0:00)")
+    else:
+        lines.append("📅 Deadline: Rolling / Open Enrollment")
+
+    if opp.verified_on:
+        lines.append(f"✅ Verified On: `{opp.verified_on}`")
+    if opp.date_evidence:
+        lines.append(f"📝 Date Evidence: {opp.date_evidence}")
+
+    lines.extend(
+        [
+            f"📅 Program Start: {opp.start_date or 'Not stated'}",
+            f"📍 Location: {opp.location or 'Not stated'} ({opp.mode or 'N/A'})",
+            f"💰 Cost: {'Free' if opp.cost == 0 else f'${opp.cost:.0f}'}",
+            f"🎁 Reward: {opp.reward or 'Not stated'}",
+        ]
+    )
 
     lines.append("\n**Eligibility:**")
     lines.append(f"  Verdict: {opp.eligibility_verdict}")
@@ -478,13 +561,13 @@ def _format_details(opp) -> str:
     if opp.is_scam:
         lines.append(f"\n🚩 **Scam Warning:** {opp.scam_reason}")
 
-    if opp.application_url:
-        lines.append(f"\n🔗 Apply: {opp.application_url}")
-    if opp.source_url and opp.source_url != opp.application_url:
-        lines.append(f"🔗 Source: {opp.source_url}")
+    if opp.source_url:
+        lines.append(f"\n🌐 Official Source: {opp.source_url}")
+    if opp.application_url and opp.application_url != opp.source_url:
+        lines.append(f"🔗 Application URL: {opp.application_url}")
 
-    lines.append(f"\n💡 Use `apply {opp.external_id[:8]}` to start the application assistant")
-    lines.append(f"💾 Use `save {opp.external_id[:8]}` to save this opportunity")
+    lines.append(f"\n💡 Use `/apply {opp.external_id[:8]}` to start the application assistant")
+    lines.append(f"💾 Use `/save {opp.external_id[:8]}` to save this opportunity")
 
     return "\n".join(lines)
 
@@ -496,6 +579,9 @@ def _format_details(opp) -> str:
 
 async def start_bot(settings: Settings) -> None:
     """Start the Telegram bot and scheduler."""
+    import asyncio
+    import sys
+
     settings.validate_runtime(require_search_and_llm=False)
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.bot_data["settings"] = settings
@@ -506,11 +592,31 @@ async def start_bot(settings: Settings) -> None:
     app.add_handler(CommandHandler(["update", "scan", "digest", "refresh"], cmd_update))
     app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
     app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
+    app.add_handler(CommandHandler(["estimated", "tba"], cmd_estimated))
     app.add_handler(CommandHandler("apply", cmd_apply))
     app.add_handler(CommandHandler("details", cmd_details))
     app.add_handler(CommandHandler("save", cmd_save))
     app.add_handler(CommandHandler("ignore", cmd_ignore))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Error handler for Telegram Conflict
+    stop_event = asyncio.Event()
+
+    async def bot_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(context.error, Conflict):
+            log.error(
+                "bot.conflict_detected",
+                error="Polling terminated because another bot instance is running with this token.",
+            )
+            print(
+                "FATAL: Telegram conflict: Another instance is polling with this bot token. Exiting cleanly.",
+                file=sys.stderr,
+            )
+            stop_event.set()
+        else:
+            log.error("bot.unhandled_error", error=str(context.error))
+
+    app.add_error_handler(bot_error_handler)
 
     # Set up scheduler for daily digests and reminders
     profile = load_profile(settings.profile_path)
@@ -519,13 +625,28 @@ async def start_bot(settings: Settings) -> None:
 
     log.info("bot.starting")
     await app.initialize()
+
+    # Startup check: probe get_updates to detect if another instance is already actively polling
+    try:
+        me = await app.bot.get_me()
+        log.info("bot.authenticated", username=me.username, id=me.id)
+        await app.bot.get_updates(offset=-1, limit=1, timeout=0)
+    except Conflict:
+        log.error(
+            "bot.startup_conflict",
+            error="Another bot instance is currently active and polling with this token. Exiting.",
+        )
+        print(
+            "FATAL: Another bot instance is currently active with this token. Exiting cleanly to avoid polling conflicts.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception as exc:
+        log.warning("bot.startup_probe_warning", error=str(exc))
+
     await app.start()
     await app.updater.start_polling(drop_pending_updates=False)
 
-    # Keep running
-    import asyncio
-
-    stop_event = asyncio.Event()
     try:
         await stop_event.wait()
     except (KeyboardInterrupt, SystemExit):

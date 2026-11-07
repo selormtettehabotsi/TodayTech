@@ -66,7 +66,13 @@ async def _seed_demo_if_empty(session) -> None:
             "title": "Google Summer of Code 2027 Mentee Program",
             "type": "fellowship",
             "organizer": "Google Open Source",
-            "deadline": date(2027, 4, 8),
+            "deadline": None,
+            "date_status": "estimated",
+            "estimated_window": "likely late March or early April 2027, based on past cycles",
+            "cycle_year": 2027,
+            "date_evidence": "Official 2027 application dates not yet published on summerofcode.withgoogle.com",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "online",
             "location": "Global / Remote",
             "cost": 0.0,
@@ -89,6 +95,11 @@ async def _seed_demo_if_empty(session) -> None:
             "type": "hackathon",
             "organizer": "ETHGlobal",
             "deadline": date(2026, 11, 29),
+            "date_status": "confirmed",
+            "cycle_year": 2026,
+            "date_evidence": "Confirmed on ETHGlobal official schedule",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "online",
             "location": "Online / Virtual",
             "cost": 0.0,
@@ -111,6 +122,11 @@ async def _seed_demo_if_empty(session) -> None:
             "type": "grant",
             "organizer": "Mozilla Foundation",
             "deadline": date(2026, 12, 18),
+            "date_status": "confirmed",
+            "cycle_year": 2026,
+            "date_evidence": "Official Mozilla Foundation grant deadline published on portal",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "online",
             "location": "Worldwide",
             "cost": 0.0,
@@ -133,6 +149,11 @@ async def _seed_demo_if_empty(session) -> None:
             "type": "scholarship",
             "organizer": "Mastercard Foundation",
             "deadline": date(2027, 1, 31),
+            "date_status": "confirmed",
+            "cycle_year": 2027,
+            "date_evidence": "Confirmed on official Mastercard Foundation scholarship partner calendar",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "in-person",
             "location": "Partner Universities (Africa, UK, US, Canada)",
             "cost": 0.0,
@@ -155,6 +176,11 @@ async def _seed_demo_if_empty(session) -> None:
             "type": "internship",
             "organizer": "Outreachy / Software Freedom Conservancy",
             "deadline": date(2027, 2, 6),
+            "date_status": "confirmed",
+            "cycle_year": 2027,
+            "date_evidence": "Confirmed on official Outreachy round schedule",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "online",
             "location": "Fully Remote",
             "cost": 0.0,
@@ -177,6 +203,11 @@ async def _seed_demo_if_empty(session) -> None:
             "type": "ambassador",
             "organizer": "GitHub Education",
             "deadline": date(2027, 2, 28),
+            "date_status": "confirmed",
+            "cycle_year": 2027,
+            "date_evidence": "Confirmed on GitHub Education Campus Experts intake page",
+            "conflict": False,
+            "verified_on": date(2026, 11, 7),
             "mode": "hybrid",
             "location": "Your campus / Global",
             "cost": 0.0,
@@ -230,6 +261,23 @@ def create_app() -> FastAPI:
     TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         import os
@@ -260,17 +308,21 @@ def create_app() -> FastAPI:
                     cmd_apply,
                     cmd_deadlines,
                     cmd_details,
+                    cmd_estimated,
                     cmd_ignore,
                     cmd_save,
                     cmd_saved,
                     cmd_update,
                 )
 
-                bot_app.add_handler(CommandHandler(["start", "help"], cmd_start))
+                bot_app.add_handler(CommandHandler(["start", "help", "menu"], cmd_start))
                 bot_app.add_handler(CommandHandler("setup", cmd_setup))
-                bot_app.add_handler(CommandHandler(["update", "scan", "digest"], cmd_update))
+                bot_app.add_handler(
+                    CommandHandler(["update", "scan", "digest", "refresh"], cmd_update)
+                )
                 bot_app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
                 bot_app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
+                bot_app.add_handler(CommandHandler(["estimated", "tba"], cmd_estimated))
                 bot_app.add_handler(CommandHandler("apply", cmd_apply))
                 bot_app.add_handler(CommandHandler("details", cmd_details))
                 bot_app.add_handler(CommandHandler("save", cmd_save))
@@ -313,7 +365,7 @@ def create_app() -> FastAPI:
     async def get_stats() -> dict[str, Any]:
         today = datetime.now(timezone.utc).date()
         async with get_session() as session:
-            opps = await get_opportunities(session, limit=200)
+            opps = await get_opportunities(session, limit=500)
             saved = await session.execute(
                 select(UserStateRow).where(UserStateRow.status == "saved")
             )
@@ -326,14 +378,26 @@ def create_app() -> FastAPI:
 
             last_scan = await get_last_scan(session)
 
+        # Task 5: Only confirmed items count toward Active Matches and Closing Soon
+        active_matches_count = sum(
+            1
+            for o in opps
+            if not o.is_scam
+            and o.date_status == "confirmed"
+            and (not o.deadline or o.deadline >= today)
+        )
         closing_soon_count = sum(
             1
             for o in opps
-            if o.deadline and (o.deadline - today) <= timedelta(days=7) and o.deadline >= today
+            if not o.is_scam
+            and o.date_status == "confirmed"
+            and o.deadline
+            and (o.deadline - today) <= timedelta(days=7)
+            and o.deadline >= today
         )
 
         return {
-            "total_opportunities": len(opps),
+            "total_opportunities": active_matches_count,
             "closing_soon_count": closing_soon_count,
             "saved_count": saved_count,
             "drafting_count": drafting_count,
@@ -352,8 +416,6 @@ def create_app() -> FastAPI:
         timeframe: str | None = Query(None),  # day, week, month, all
     ) -> list[dict[str, Any]]:
         today = datetime.now(timezone.utc).date()
-        # Every term must appear somewhere in the searchable fields ("google code" matches
-        # "Google Summer of Code"). Filters run over all rows; the result cap applies after.
         terms = query.lower().split() if query else []
         async with get_session() as session:
             opps = await get_opportunities(
@@ -372,7 +434,12 @@ def create_app() -> FastAPI:
             opp_status = user_states.get(opp.external_id, "radar")
 
             # Filter out opportunities that have ended / passed deadline
-            if opp_status != "applied" and opp.deadline and opp.deadline < today:
+            if (
+                opp_status != "applied"
+                and opp.date_status == "confirmed"
+                and opp.deadline
+                and opp.deadline < today
+            ):
                 continue
 
             # Status filter
@@ -390,10 +457,11 @@ def create_app() -> FastAPI:
             ):
                 continue
 
-            # Closing soon filter
+            # Task 5: Only confirmed items count toward Closing Soon
             if closing_soon:
                 if (
-                    not opp.deadline
+                    opp.date_status != "confirmed"
+                    or not opp.deadline
                     or (opp.deadline - today) > timedelta(days=7)
                     or opp.deadline < today
                 ):
@@ -401,16 +469,28 @@ def create_app() -> FastAPI:
 
             # Timeframe filter (day, week, month)
             if timeframe == "day":
-                # Closing in next 3 days or top match
-                if opp.deadline and (opp.deadline - today).days > 3 and opp.deadline >= today:
+                if (
+                    opp.date_status == "confirmed"
+                    and opp.deadline
+                    and (opp.deadline - today).days > 3
+                    and opp.deadline >= today
+                ):
                     continue
             elif timeframe == "week":
-                # Closing in next 7 days
-                if not opp.deadline or (opp.deadline - today).days > 7 or opp.deadline < today:
+                if (
+                    opp.date_status != "confirmed"
+                    or not opp.deadline
+                    or (opp.deadline - today).days > 7
+                    or opp.deadline < today
+                ):
                     continue
             elif timeframe == "month":
-                # Closing in next 30 days
-                if not opp.deadline or (opp.deadline - today).days > 30 or opp.deadline < today:
+                if (
+                    opp.date_status != "confirmed"
+                    or not opp.deadline
+                    or (opp.deadline - today).days > 30
+                    or opp.deadline < today
+                ):
                     continue
 
             # Query search
@@ -428,12 +508,19 @@ def create_app() -> FastAPI:
                         opp.eligibility_text,
                         opp.source_name,
                         opp.fit_reason,
+                        opp.estimated_window,
+                        opp.date_evidence,
                     )
                 ).lower()
                 if not all(term in combined for term in terms):
                     continue
 
-            days_left = (opp.deadline - today).days if opp.deadline else None
+            # Days left computed ONLY for confirmed items
+            days_left = (
+                (opp.deadline - today).days
+                if (opp.date_status == "confirmed" and opp.deadline)
+                else None
+            )
 
             results.append(
                 {
@@ -441,8 +528,17 @@ def create_app() -> FastAPI:
                     "title": opp.title,
                     "type": opp.type,
                     "organizer": opp.organizer or "Independent",
-                    "deadline": opp.deadline.isoformat() if opp.deadline else None,
+                    "deadline": opp.deadline.isoformat()
+                    if (opp.date_status == "confirmed" and opp.deadline)
+                    else None,
                     "days_left": days_left,
+                    "date_status": opp.date_status or "unknown",
+                    "estimated_window": opp.estimated_window,
+                    "cycle_year": opp.cycle_year,
+                    "date_evidence": opp.date_evidence,
+                    "conflict": bool(opp.conflict),
+                    "source_url": opp.source_url or "",
+                    "verified_on": opp.verified_on.isoformat() if opp.verified_on else None,
                     "mode": opp.mode or "Online",
                     "location": opp.location or "Global",
                     "cost": opp.cost,
@@ -491,15 +587,28 @@ def create_app() -> FastAPI:
             app_row = app_res.scalars().first()
 
         today = datetime.now(timezone.utc).date()
-        days_left = (opp.deadline - today).days if opp.deadline else None
+        days_left = (
+            (opp.deadline - today).days
+            if (opp.date_status == "confirmed" and opp.deadline)
+            else None
+        )
 
         return {
             "id": opp.external_id,
             "title": opp.title,
             "type": opp.type,
             "organizer": opp.organizer,
-            "deadline": opp.deadline.isoformat() if opp.deadline else None,
+            "deadline": opp.deadline.isoformat()
+            if (opp.date_status == "confirmed" and opp.deadline)
+            else None,
             "days_left": days_left,
+            "date_status": opp.date_status or "unknown",
+            "estimated_window": opp.estimated_window,
+            "cycle_year": opp.cycle_year,
+            "date_evidence": opp.date_evidence,
+            "conflict": bool(opp.conflict),
+            "source_url": opp.source_url or "",
+            "verified_on": opp.verified_on.isoformat() if opp.verified_on else None,
             "mode": opp.mode,
             "location": opp.location,
             "cost": opp.cost,

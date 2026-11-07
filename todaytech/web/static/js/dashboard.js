@@ -31,8 +31,17 @@ const ICONS = {
   alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`,
   externalLink: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
   copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
-  cross: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`
+  cross: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
+  shieldCheck: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>`,
+  document: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>`
 };
+
+function safeHtml(html) {
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+    return DOMPurify.sanitize(html);
+  }
+  return escapeHtml(html);
+}
 
 let currentFilter = 'all';
 let currentStatus = 'radar';
@@ -227,10 +236,12 @@ async function loadPipeline() {
 }
 
 function renderCard(opp) {
-  const typeClass = `type-${opp.type.toLowerCase()}`;
+  const typeClass = `type-${(opp.type || 'other').toLowerCase()}`;
+  const dateStatus = (opp.date_status || 'unknown').toLowerCase();
   
+  // Task 5: Only confirmed items count toward days-left badge with countdown
   let deadlineBadge = '';
-  if (opp.deadline) {
+  if (dateStatus === 'confirmed' && opp.deadline) {
     const formattedDate = formatDeadlineDate(opp.deadline);
     if (opp.days_left !== null && opp.days_left !== undefined) {
       if (opp.days_left < 0) {
@@ -245,8 +256,13 @@ function renderCard(opp) {
     } else {
       deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} ${formattedDate} (GMT)</span>`;
     }
-  } else {
+  } else if (dateStatus === 'estimated') {
+    const windowText = opp.estimated_window || 'Expected window TBA';
+    deadlineBadge = `<span class="tag-estimated" style="background:#ECFDF5; color:#047857; border:1px solid #A7F3D0; border-radius:4px; padding:2px 7px; font-size:12px; font-weight:500;">${ICONS.calendar} Estimated: ${escapeHtml(windowText)}</span>`;
+  } else if (dateStatus === 'rolling') {
     deadlineBadge = `<span class="tag-comfortable">${ICONS.calendar} Rolling / Open Enrollment</span>`;
+  } else {
+    deadlineBadge = `<span class="tag-comfortable" style="background:#F3F4F6; color:#4B5563;">${ICONS.calendar} Date Unknown / Pending Verification</span>`;
   }
 
   const isSaved = opp.status === 'saved' || opp.status === 'in_progress' || opp.status === 'applied';
@@ -255,10 +271,18 @@ function renderCard(opp) {
   const saveClass = isSaved ? 'btn-link btn-saved' : 'btn-link';
   const saveTitle = isSaved ? 'Click to unsave (remove from pipeline)' : 'Save to pipeline';
 
+  const verifiedBadge = opp.verified_on ? `Verified ${formatDeadlineDate(opp.verified_on)}` : 'Pending Verification';
+  const sourceLinkHtml = opp.source_url ? `
+    <a href="${escapeHtml(opp.source_url)}" target="_blank" rel="noopener noreferrer" class="source-link" onclick="event.stopPropagation();" title="Open official organizer verification page" style="display:inline-flex; align-items:center; gap:4px; color:var(--text-muted); font-size:12px; text-decoration:none;">
+      ${ICONS.externalLink}
+      <span style="text-decoration:underline;">Source</span>
+    </a>
+  ` : '';
+
   return `
     <article class="card">
       <div class="card-top" onclick="openAssistant('${opp.id}')" style="cursor: pointer;">
-        <span class="type-tag ${typeClass}">${opp.type}</span>
+        <span class="type-tag ${typeClass}">${escapeHtml(opp.type)}</span>
         <span class="badge-score">
           ${ICONS.check}
           ${opp.fit_score}% Match
@@ -282,6 +306,13 @@ function renderCard(opp) {
         <div class="meta-row">
           <span class="meta-icon" style="color: inherit;"></span>
           ${deadlineBadge}
+        </div>
+        <div class="meta-row meta-verification" style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border-subtle); font-size:12px; color:var(--text-muted);">
+          <span style="display:inline-flex; align-items:center; gap:4px;">
+            ${ICONS.shieldCheck}
+            <span>${verifiedBadge}</span>
+          </span>
+          ${sourceLinkHtml}
         </div>
       </div>
 
@@ -315,22 +346,34 @@ function updatePipeline(items) {
     return;
   }
 
-  pipelineContainer.innerHTML = activeItems.map(item => `
-    <div class="pipeline-item" onclick="openAssistant('${item.id}')" title="Click to open application studio">
-      <div class="pipeline-item-top">
-        <span class="pipeline-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
-        <div class="pipeline-item-actions">
-          <span class="status-badge status-${item.status}">${item.status.replace('_', ' ')}</span>
-          <button class="pipeline-remove-btn" onclick="event.stopPropagation(); unsaveOpportunity('${item.id}')" title="Unsave / Remove from pipeline" aria-label="Unsave opportunity">
-            ${ICONS.cross}
-          </button>
+  pipelineContainer.innerHTML = activeItems.map(item => {
+    const isConfirmed = (item.date_status || '').toLowerCase() === 'confirmed';
+    let dateLine = '';
+    if (isConfirmed && item.deadline) {
+      dateLine = `${ICONS.calendar} ${formatDeadlineDate(item.deadline)} (GMT)${item.days_left !== null && item.days_left !== undefined ? ' • ' + item.days_left + 'd left' : ''}`;
+    } else if ((item.date_status || '').toLowerCase() === 'estimated') {
+      dateLine = `${ICONS.calendar} Estimated: ${escapeHtml(item.estimated_window || 'TBA')}`;
+    } else {
+      dateLine = `${ICONS.calendar} Rolling / Open Enrollment`;
+    }
+
+    return `
+      <div class="pipeline-item" onclick="openAssistant('${item.id}')" title="Click to open application studio">
+        <div class="pipeline-item-top">
+          <span class="pipeline-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
+          <div class="pipeline-item-actions">
+            <span class="status-badge status-${item.status}">${item.status.replace('_', ' ')}</span>
+            <button class="pipeline-remove-btn" onclick="event.stopPropagation(); unsaveOpportunity('${item.id}')" title="Unsave / Remove from pipeline" aria-label="Unsave opportunity">
+              ${ICONS.cross}
+            </button>
+          </div>
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; margin-top: 4px;">
+          ${dateLine}
         </div>
       </div>
-      <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; margin-top: 4px;">
-        ${ICONS.calendar} ${item.deadline ? formatDeadlineDate(item.deadline) + ' (GMT)' + (item.days_left !== null ? ' • ' + item.days_left + 'd left' : '') : 'Rolling / Open Enrollment'}
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 async function unsaveOpportunity(id) {
@@ -443,7 +486,11 @@ async function openAssistant(id) {
           </div>
           <div class="checklist-item">
             <span style="color: var(--text-muted);">${ICONS.calendar}</span>
-            <span><strong>Deadline:</strong> ${data.deadline ? formatDeadlineDate(data.deadline) + ' (GMT 0:00) — ' + (data.days_left !== null && data.days_left !== undefined ? (data.days_left < 0 ? 'Closed' : data.days_left + ' days left') : '') : 'Rolling / Open Enrollment'}</span>
+            <span><strong>Date Status:</strong> ${escapeHtml((data.date_status || 'unknown').toUpperCase())} ${data.deadline ? '— ' + formatDeadlineDate(data.deadline) + ' (GMT 0:00)' + (data.days_left !== null && data.days_left !== undefined ? ' (' + (data.days_left < 0 ? 'Closed' : data.days_left + ' days left') + ')' : '') : (data.estimated_window ? '— Estimated: ' + escapeHtml(data.estimated_window) : '— Rolling / Open Enrollment')}</span>
+          </div>
+          <div class="checklist-item">
+            <span style="color: var(--text-muted);">${ICONS.shieldCheck}</span>
+            <span><strong>Verification:</strong> ${data.verified_on ? 'Verified on ' + formatDeadlineDate(data.verified_on) : 'Pending Verification'} ${data.source_url ? `• <a href="${escapeHtml(data.source_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--text-color); text-decoration:underline;">Official Source Page</a>` : ''}</span>
           </div>
         </div>
       </div>
@@ -501,12 +548,10 @@ function renderDraftFiles(id, files, content) {
 
   let downloadButtons = '<div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">';
   files.forEach(f => {
-    const isDocx = f.name.endsWith('.docx');
-    const icon = isDocx ? '📄' : '📝';
     downloadButtons += `
       <a href="${f.download_url}" download="${f.name}" class="btn btn-secondary btn-sm" 
          style="display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 500;">
-        <span>${icon}</span>
+        <span>${ICONS.document}</span>
         <span>Download ${f.name}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>

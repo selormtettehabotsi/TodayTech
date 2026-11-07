@@ -10,6 +10,7 @@ Secrets are never logged.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -22,9 +23,65 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
-async def _call_gemini(api_key: str, prompt: str, system: str = "", json_mode: bool = False) -> str:
-    """Call Google Gemini API with automatic model fallback."""
-    models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]
+def parse_defensive_json_array(raw: str) -> list[dict[str, Any]]:
+    """Defensively parse a JSON array from LLM output, stripping fences and extra prose."""
+    if not raw or not raw.strip():
+        return []
+
+    text = raw.strip()
+
+    # Strip markdown code fences
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    else:
+        lines = [line for line in text.split("\n") if not line.strip().startswith("```")]
+        text = "\n".join(lines).strip()
+
+    # 1. Try direct parse
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [x for x in parsed if isinstance(x, dict)]
+        if isinstance(parsed, dict):
+            for key in ("opportunities", "items", "results", "data"):
+                if key in parsed and isinstance(parsed[key], list):
+                    return [x for x in parsed[key] if isinstance(x, dict)]
+            return [parsed]
+    except Exception:
+        pass
+
+    # 2. Extract outermost [ ... ]
+    start_idx = text.find("[")
+    end_idx = text.rfind("]")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        bracket_content = text[start_idx : end_idx + 1]
+        try:
+            parsed = json.loads(bracket_content)
+            if isinstance(parsed, list):
+                return [x for x in parsed if isinstance(x, dict)]
+        except Exception:
+            # Try cleaning trailing commas: ,] -> ] and ,} -> }
+            cleaned = re.sub(r",\s*([\]}])", r"\1", bracket_content)
+            try:
+                parsed = json.loads(cleaned)
+                if isinstance(parsed, list):
+                    return [x for x in parsed if isinstance(x, dict)]
+            except Exception:
+                pass
+
+    return []
+
+
+async def _call_gemini(
+    api_key: str,
+    prompt: str,
+    system: str = "",
+    json_mode: bool = False,
+    enable_grounding: bool = False,
+) -> str:
+    """Call Google Gemini API with automatic model fallback and optional Google Search grounding."""
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
     last_err = None
 
     for model in models:
@@ -39,7 +96,12 @@ async def _call_gemini(api_key: str, prompt: str, system: str = "", json_mode: b
         contents.append({"role": "user", "parts": [{"text": prompt}]})
 
         body: dict[str, Any] = {"contents": contents}
-        if json_mode:
+
+        if enable_grounding:
+            # Enable Google Search grounding tool
+            body["tools"] = [{"googleSearch": {}}]
+            # Do NOT force responseMimeType when search grounding is active; Gemini returns 400
+        elif json_mode:
             body["generationConfig"] = {"responseMimeType": "application/json"}
 
         try:
@@ -47,7 +109,11 @@ async def _call_gemini(api_key: str, prompt: str, system: str = "", json_mode: b
                 resp = await client.post(url, headers=headers, params=params, json=body)
                 resp.raise_for_status()
                 data = resp.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"]
+                parts = data["candidates"][0]["content"].get("parts", [])
+                texts = [p["text"] for p in parts if "text" in p]
+                if texts:
+                    return "\n".join(texts)
+                return ""
         except Exception as exc:
             last_err = exc
             log.warning("gemini.model_failed", model=model, error=str(exc))
@@ -203,14 +269,20 @@ class LLMClient:
         *,
         system: str = "",
         json_mode: bool = False,
+        enable_grounding: bool = False,
     ) -> str:
         """Generate text, trying providers in order until one succeeds."""
         last_error: Exception | None = None
 
         for name, key_or_url in self._providers:
+            # If grounding is requested, only gemini supports Google Search grounding
+            if enable_grounding and name != "gemini":
+                continue
             try:
-                log.debug("llm.calling", provider=name)
-                result = await self._dispatch(name, key_or_url, prompt, system, json_mode)
+                log.debug("llm.calling", provider=name, grounding=enable_grounding)
+                result = await self._dispatch(
+                    name, key_or_url, prompt, system, json_mode, enable_grounding
+                )
                 log.debug("llm.success", provider=name, chars=len(result))
                 return result
             except Exception as exc:
@@ -236,13 +308,28 @@ class LLMClient:
             cleaned = "\n".join(lines)
         return json.loads(cleaned)
 
+    async def generate_grounded_json_array(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+    ) -> list[dict[str, Any]]:
+        """Generate with Google Search grounding and defensively parse JSON array."""
+        raw = await self.generate(prompt, system=system, json_mode=False, enable_grounding=True)
+        return parse_defensive_json_array(raw)
+
     @staticmethod
     async def _dispatch(
-        name: str, key_or_url: str, prompt: str, system: str, json_mode: bool
+        name: str,
+        key_or_url: str,
+        prompt: str,
+        system: str,
+        json_mode: bool,
+        enable_grounding: bool = False,
     ) -> str:
         match name:
             case "gemini":
-                return await _call_gemini(key_or_url, prompt, system, json_mode)
+                return await _call_gemini(key_or_url, prompt, system, json_mode, enable_grounding)
             case "groq":
                 return await _call_groq(key_or_url, prompt, system, json_mode)
             case "openrouter":

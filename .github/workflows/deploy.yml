@@ -1,0 +1,52 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to EC2 Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on EC2 via SSH
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "${EC2_USER}@${EC2_HOST}" << 'EOF'
+            set -e
+            echo "--> Pulling latest main branch..."
+            cd /home/ubuntu/TodayTech
+            git pull origin main
+
+            echo "--> Rebuilding and restarting containers..."
+            sudo docker compose up -d --build
+
+            echo "--> Waiting for services to become healthy..."
+            sleep 10
+
+            echo "--> Running health check on Web API..."
+            curl --fail --retry 5 --retry-delay 3 --retry-connrefused http://localhost:8000/api/stats || {
+              echo "Health check failed!"
+              sudo docker compose logs --tail 50
+              exit 1
+            }
+
+            echo "--> Checking container status..."
+            sudo docker compose ps
+
+            echo "--> Deployment successful!"
+          EOF

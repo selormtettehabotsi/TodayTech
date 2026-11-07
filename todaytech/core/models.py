@@ -31,6 +31,13 @@ class EligibilityVerdict(str, enum.Enum):
     NOT_ELIGIBLE = "Not eligible"
 
 
+class DateStatus(str, enum.Enum):
+    CONFIRMED = "confirmed"
+    ESTIMATED = "estimated"
+    ROLLING = "rolling"
+    UNKNOWN = "unknown"
+
+
 class ApplicationStatus(str, enum.Enum):
     SAVED = "saved"
     DRAFTING = "drafting"
@@ -164,6 +171,15 @@ class Opportunity(BaseModel):
     source_url: str = ""
     confidence: float = 0.0  # 0-1 extraction confidence
 
+    # Verification & Date Confidence fields
+    date_status: DateStatus = DateStatus.UNKNOWN
+    estimated_window: str | None = None
+    cycle_year: int | None = None
+    date_evidence: str = ""
+    conflict: bool = False
+    verified_on: date | None = None
+    days_remaining: int | None = None
+
     # Enriched fields (post-processing)
     fit_score: int = 0  # 0-100
     fit_reason: str = ""
@@ -196,6 +212,10 @@ class DigestItem(BaseModel):
     fit_reason: str = ""
     eligibility_verdict: EligibilityVerdict = EligibilityVerdict.CHECK
     link: str = ""
+    date_status: DateStatus = DateStatus.UNKNOWN
+    estimated_window: str | None = None
+    source_url: str = ""
+    verified_on: date | None = None
 
 
 # ---------------------------------------------------------------------------
