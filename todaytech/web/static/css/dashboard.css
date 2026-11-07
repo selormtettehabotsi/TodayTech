@@ -218,9 +218,7 @@ body {
   max-width: 1400px;
   margin: 0 auto;
   padding: 32px 28px 64px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 36px;
+  display: block;
 }
 
 @media (max-width: 1080px) {

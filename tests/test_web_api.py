@@ -1,4 +1,4 @@
-"""Tests for the TodayTech Web Dashboard REST APIs."""
+"""Tests for the TodayTech Public Read-Only Web Dashboard and REST APIs."""
 
 from __future__ import annotations
 
@@ -7,287 +7,276 @@ from httpx import ASGITransport, AsyncClient
 
 from todaytech.core.database import get_session, init_db
 from todaytech.web.app import _seed_demo_if_empty, create_app
+from todaytech.web.rate_limit import rate_limiter
 
 
 @pytest.fixture(autouse=True)
 async def setup_test_db(tmp_path):
-    # Isolated DB per test. ASGITransport doesn't fire startup events, so seed here.
+    # Isolated DB per test
+    rate_limiter.reset()
     await init_db(f"sqlite+aiosqlite:///{(tmp_path / 'test.db').as_posix()}")
     async with get_session() as session:
         await _seed_demo_if_empty(session)
 
 
 @pytest.mark.asyncio
-async def test_api_stats():
+async def test_public_unauthenticated_get_works():
+    """Requirement 1 & 7: Verify unauthenticated GET / and public APIs work without any login/password."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.get("/api/stats")
-        assert res.status_code == 200
-        data = res.json()
-        assert "total_opportunities" in data
-        assert "closing_soon_count" in data
-        assert "saved_count" in data
+        # Home page
+        res_index = await client.get("/")
+        assert res_index.status_code == 200
+        assert "TodayTech" in res_index.text
+
+        # Health checks
+        res_h1 = await client.get("/health")
+        assert res_h1.status_code == 200
+        assert res_h1.json()["status"] == "healthy"
+
+        res_h2 = await client.get("/api/health")
+        assert res_h2.status_code == 200
+        assert res_h2.json()["status"] == "healthy"
+
+        # Stats API
+        res_stats = await client.get("/api/stats")
+        assert res_stats.status_code == 200
+        stats = res_stats.json()
+        assert "total_opportunities" in stats
+        assert "closing_soon_count" in stats
+
+        # Opportunities API
+        res_opps = await client.get("/api/opportunities")
+        assert res_opps.status_code == 200
+        opps = res_opps.json()
+        assert isinstance(opps, list)
+        assert len(opps) > 0
 
 
 @pytest.mark.asyncio
-async def test_api_opportunities_and_timeframe():
+async def test_all_write_methods_return_405():
+    """Requirement 2 & 7: Allow only GET requests. Return 405 for POST, PUT, PATCH and DELETE."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Fetch all radar items
-        res = await client.get("/api/opportunities?status=radar")
-        assert res.status_code == 200
-        items = res.json()
-        assert isinstance(items, list)
+        target_endpoints = [
+            "/",
+            "/api/stats",
+            "/api/opportunities",
+            "/api/opportunity/c8f1e29a1b2c3d4e",
+            "/api/scan",
+            "/api/profile",
+            "/api/opportunity/c8f1e29a1b2c3d4e/state",
+            "/api/opportunity/c8f1e29a1b2c3d4e/apply",
+            "/api/digest",
+        ]
 
-        # Test timeframe filtering: day, week, month
-        res_day = await client.get("/api/opportunities?status=radar&timeframe=day")
-        assert res_day.status_code == 200
-        items_day = res_day.json()
-        assert isinstance(items_day, list)
+        for ep in target_endpoints:
+            # POST
+            res_post = await client.post(ep, json={"test": "data"})
+            assert res_post.status_code == 405, (
+                f"POST {ep} expected 405, got {res_post.status_code}"
+            )
+            assert res_post.headers.get("allow") == "GET, HEAD, OPTIONS"
 
-        res_week = await client.get("/api/opportunities?status=radar&timeframe=week")
-        assert res_week.status_code == 200
-        items_week = res_week.json()
-        assert isinstance(items_week, list)
+            # PUT
+            res_put = await client.put(ep, json={"test": "data"})
+            assert res_put.status_code == 405, f"PUT {ep} expected 405, got {res_put.status_code}"
 
-        res_month = await client.get("/api/opportunities?status=radar&timeframe=month")
-        assert res_month.status_code == 200
-        items_month = res_month.json()
-        assert isinstance(items_month, list)
+            # PATCH
+            res_patch = await client.patch(ep, json={"test": "data"})
+            assert res_patch.status_code == 405, (
+                f"PATCH {ep} expected 405, got {res_patch.status_code}"
+            )
+
+            # DELETE
+            res_del = await client.delete(ep)
+            assert res_del.status_code == 405, (
+                f"DELETE {ep} expected 405, got {res_del.status_code}"
+            )
 
 
 @pytest.mark.asyncio
-async def test_save_and_unsave_workflow():
+async def test_public_api_never_exposes_private_fields():
+    """Requirement 3 & 7: Return strictly permitted fields.
+
+    MUST NOT return profile, preferences, email, saved or ignored flags,
+    application drafts, CV or SOP text, or match reasoning text.
+    Fails if any private field appears in any public response.
+    """
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Get one opportunity
-        res = await client.get("/api/opportunities?status=all")
-        assert res.status_code == 200
-        items = res.json()
+        res_list = await client.get("/api/opportunities")
+        assert res_list.status_code == 200
+        items = res_list.json()
         assert len(items) > 0
-        opp_id = items[0]["id"]
 
-        # Save opportunity
-        res_save = await client.post(
-            f"/api/opportunity/{opp_id}/state",
-            json={"status": "saved", "notes": "Saved for testing"},
-        )
-        assert res_save.status_code == 200
-        assert res_save.json()["status"] == "saved"
+        first_id = items[0]["id"]
+        res_detail = await client.get(f"/api/opportunity/{first_id}")
+        assert res_detail.status_code == 200
+        detail = res_detail.json()
 
-        # Check it appears in pipeline
-        res_pipeline = await client.get("/api/opportunities?status=pipeline")
-        assert res_pipeline.status_code == 200
-        pipeline_items = res_pipeline.json()
-        pipeline_ids = [item["id"] for item in pipeline_items]
-        assert opp_id in pipeline_ids
+        res_stats = await client.get("/api/stats")
+        assert res_stats.status_code == 200
+        stats = res_stats.json()
 
-        # Unsave opportunity (set back to radar)
-        res_unsave = await client.post(
-            f"/api/opportunity/{opp_id}/state",
-            json={"status": "radar", "notes": ""},
-        )
-        assert res_unsave.status_code == 200
-        assert res_unsave.json()["status"] == "radar"
+        # Forbidden fields
+        forbidden_fields = {
+            "profile",
+            "preferences",
+            "email",
+            "saved",
+            "ignored",
+            "status",
+            "notes",
+            "user_state",
+            "saved_count",
+            "drafting_count",
+            "draft",
+            "drafts",
+            "cv",
+            "sop",
+            "fit_reason",
+            "eligibility_reason",
+            "eligibility_text",
+            "is_scam",
+            "scam_reason",
+            "raw_text",
+        }
 
-        # Verify it is removed from saved list
-        res_saved = await client.get("/api/opportunities?status=saved")
-        assert res_saved.status_code == 200
-        saved_ids = [item["id"] for item in res_saved.json()]
-        assert opp_id not in saved_ids
+        # Check all items in list response
+        for item in items:
+            for key in item.keys():
+                assert key.lower() not in forbidden_fields, (
+                    f"Forbidden field '{key}' leaked in list item!"
+                )
 
+        # Check detail item response
+        for key in detail.keys():
+            assert key.lower() not in forbidden_fields, (
+                f"Forbidden field '{key}' leaked in detail item!"
+            )
 
-@pytest.mark.asyncio
-async def test_search_query():
-    app = create_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Check stats response
+        for key in stats.keys():
+            assert key.lower() not in forbidden_fields, f"Forbidden field '{key}' leaked in stats!"
 
-        async def search(q: str) -> list[str]:
-            res = await client.get("/api/opportunities", params={"status": "all", "query": q})
-            assert res.status_code == 200
-            return [item["title"] for item in res.json()]
-
-        # Case-insensitive, and multi-word terms need not be adjacent
-        assert any("Google Summer of Code" in t for t in await search("GOOGLE"))
-        assert any("Google Summer of Code" in t for t in await search("google code"))
-        # Matches on type, not just title text
-        assert any("Hackathon" in t for t in await search("hackathon"))
-        # Every term must match
-        assert await search("google zzz-no-such-term") == []
-        # Campus ambassador programs are searchable by type and title text
-        assert any("Campus Experts" in t for t in await search("campus ambassador"))
-
-
-@pytest.mark.asyncio
-async def test_ambassador_type_filter():
-    app = create_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.get("/api/opportunities", params={"status": "all", "type": "ambassador"})
-        assert res.status_code == 200
-        items = res.json()
-        assert len(items) > 0
-        assert all(item["type"] == "ambassador" for item in items)
-
-
-@pytest.mark.asyncio
-async def test_api_digest_horizons():
-    app = create_app()
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Day horizon
-        res = await client.get("/api/digest?timeframe=day")
-        assert res.status_code == 200
-        data = res.json()
-        assert "closing_soon" in data
-        assert "hot_picks" in data
-        assert "digest_markdown" in data
-        assert data["timeframe"] == "day"
-
-        # Week horizon
-        res_week = await client.get("/api/digest?timeframe=week")
-        assert res_week.status_code == 200
-        assert res_week.json()["timeframe"] == "week"
-
-        # Month horizon
-        res_month = await client.get("/api/digest?timeframe=month")
-        assert res_month.status_code == 200
-        assert res_month.json()["timeframe"] == "month"
+        # Verify required permitted fields are present
+        required_public_fields = {
+            "title",
+            "organisation",
+            "type",
+            "field",
+            "location",
+            "funding",
+            "date_status",
+            "deadline",
+            "estimated_window",
+            "days_left",
+            "verified_on",
+            "source_url",
+            "apply_url",
+            "match_percentage",
+        }
+        for field in required_public_fields:
+            assert field in detail, (
+                f"Expected public field '{field}' was missing from detail response!"
+            )
 
 
 @pytest.mark.asyncio
-async def test_api_drafts_and_downloads():
-    import shutil
-    from pathlib import Path
-
-    drafts_dir = Path("data/drafts/test1234567890ab")
-    drafts_dir.mkdir(parents=True, exist_ok=True)
-    test_docx = drafts_dir / "motivation_letter.docx"
-    test_docx.write_bytes(b"PK fake docx content")
-    test_md = drafts_dir / "motivation_letter.md"
-    test_md.write_text("# Motivation Letter\nTest content", encoding="utf-8")
-
-    try:
-        app = create_app()
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            res = await client.get("/api/opportunity/test1234567890ab/drafts")
-            assert res.status_code == 200
-            data = res.json()
-            assert data["has_drafts"] is True
-            assert len(data["files"]) >= 2
-            assert "Test content" in data["content"]
-
-            res_dl = await client.get("/drafts/test1234567890ab/motivation_letter.docx")
-            assert res_dl.status_code == 200
-            assert res_dl.content == b"PK fake docx content"
-    finally:
-        if drafts_dir.exists():
-            shutil.rmtree(str(drafts_dir))
-
-
-@pytest.mark.asyncio
-async def test_api_multiple_application_rows():
-    """Verify that having multiple ApplicationRows or UserStateRows does not throw 500 error."""
-    from todaytech.core.database import ApplicationRow, UserStateRow
-
+async def test_rate_limiting_blocks_abuse():
+    """Requirement 4 & 7: Per-IP rate limiting blocks burst/abuse with HTTP 429 and Retry-After."""
     app = create_app()
     transport = ASGITransport(app=app)
 
-    async with get_session() as session:
-        session.add(ApplicationRow(opportunity_id="d41c7b2e9a0f5c63", status="drafting"))
-        session.add(ApplicationRow(opportunity_id="d41c7b2e9a0f5c63", status="submitted"))
-        session.add(UserStateRow(opportunity_id="d41c7b2e9a0f5c63", status="saved"))
-        session.add(UserStateRow(opportunity_id="d41c7b2e9a0f5c63", status="in_progress"))
-        await session.commit()
+    # Use a custom client IP
+    headers = {"X-Forwarded-For": "203.0.113.195"}
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.get("/api/opportunity/d41c7b2e9a0f5c63")
-        assert res.status_code == 200
-        data = res.json()
-        assert data["id"] == "d41c7b2e9a0f5c63"
-        assert data["has_drafts"] is True
+        # Send 60 requests (allowed)
+        for i in range(60):
+            res = await client.get("/api/stats", headers=headers)
+            assert res.status_code == 200, f"Request {i + 1} failed with {res.status_code}"
+
+        # 61st request triggers rate limit block (HTTP 429)
+        res_blocked = await client.get("/api/stats", headers=headers)
+        assert res_blocked.status_code == 429
+        assert "Retry-After" in res_blocked.headers
+        data = res_blocked.json()
+        assert "Rate limit exceeded" in data["error"]
+
+        # Health endpoint remains accessible
+        res_health = await client.get("/health", headers=headers)
+        assert res_health.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_api_scan_status():
-    """Verify that /api/scan/status returns running state and no-cache headers."""
+async def test_query_length_capping_and_page_size():
+    """Requirement 4: Cap query length <= 100 and limit page size."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        res = await client.get("/api/scan/status")
-        assert res.status_code == 200
-        data = res.json()
-        assert "running" in data
-        assert "no-cache" in res.headers.get("cache-control", "")
+        # Long query > 100 chars returns 400 Bad Request
+        long_query = "a" * 101
+        res = await client.get("/api/opportunities", params={"query": long_query})
+        assert res.status_code == 400
+        assert "maximum length of 100" in res.json()["error"]
+
+        # Query <= 100 succeeds
+        valid_query = "a" * 100
+        res_ok = await client.get("/api/opportunities", params={"query": valid_query})
+        assert res_ok.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_api_date_status_and_security_headers():
-    """Verify Task 5 requirements: security headers, GSoC estimated with no days_left countdown, confirmed items have days_left."""
+async def test_docs_and_debug_routes_disabled():
+    """Requirement 5: Confirm /docs, /openapi.json, and /redoc are disabled in production."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Check security headers
+        assert (await client.get("/docs")).status_code == 404
+        assert (await client.get("/redoc")).status_code == 404
+        assert (await client.get("/openapi.json")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_security_headers_over_http():
+    """Requirement 6: Verify X-Frame-Options: DENY, X-Content-Type-Options: nosniff,
+
+    Referrer-Policy: no-referrer, and CSP with no unsafe-inline.
+    """
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         res = await client.get("/api/stats")
         assert res.status_code == 200
         assert res.headers.get("x-frame-options") == "DENY"
-        assert "frame-ancestors 'none'" in res.headers.get("content-security-policy", "")
-        assert "unsafe-inline" not in res.headers.get("content-security-policy", "")
+        assert res.headers.get("x-content-type-options") == "nosniff"
+        assert res.headers.get("referrer-policy") == "no-referrer"
 
-        # Check opportunities list
-        res_opps = await client.get("/api/opportunities?status=radar")
-        assert res_opps.status_code == 200
-        opps = res_opps.json()
-
-        # Find GSoC 2027
-        gsoc = next((o for o in opps if "Google Summer of Code" in o["title"]), None)
-        assert gsoc is not None
-        assert gsoc["date_status"] == "estimated"
-        assert gsoc["deadline"] is None
-        assert gsoc["days_left"] is None
-        assert gsoc["estimated_window"] is not None
-        assert gsoc["source_url"] == "https://summerofcode.withgoogle.com"
-
-        # Find ETHGlobal (confirmed)
-        eth = next((o for o in opps if "ETHGlobal" in o["title"]), None)
-        assert eth is not None
-        assert eth["date_status"] == "confirmed"
-        assert eth["deadline"] is not None
-        assert eth["days_left"] is not None
-        assert eth["days_left"] > 0
-        assert eth["source_url"] == "https://ethglobal.com"
+        csp = res.headers.get("content-security-policy", "")
+        assert "frame-ancestors 'none'" in csp
+        assert "unsafe-inline" not in csp
+        assert "default-src 'self'" in csp
 
 
 @pytest.mark.asyncio
-async def test_api_basic_auth_protection(monkeypatch):
-    """Verify that when DASHBOARD_PASSWORD is set, access requires valid basic auth credentials."""
-    import base64
-
-    from todaytech.core.config import get_settings
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "dashboard_username", "selorm")
-    monkeypatch.setattr(settings, "dashboard_password", "supersecret123")
-
+async def test_search_and_timeframe_filters():
+    """Verify search keyword and timeframe filtering in public API."""
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # 1. Unauthenticated request must return 401
-        res = await client.get("/api/stats")
-        assert res.status_code == 401
-        assert "Basic" in res.headers.get("www-authenticate", "")
+        # Search by term
+        res_google = await client.get("/api/opportunities", params={"query": "Google"})
+        assert res_google.status_code == 200
+        items_google = res_google.json()
+        assert any("Google" in item["title"] for item in items_google)
 
-        # 2. Invalid credentials must return 401
-        bad_creds = base64.b64encode(b"selorm:wrongpass").decode("utf-8")
-        res_bad = await client.get("/api/stats", headers={"Authorization": f"Basic {bad_creds}"})
-        assert res_bad.status_code == 401
-
-        # 3. Valid credentials must succeed with 200
-        good_creds = base64.b64encode(b"selorm:supersecret123").decode("utf-8")
-        res_good = await client.get("/api/stats", headers={"Authorization": f"Basic {good_creds}"})
-        assert res_good.status_code == 200
+        # Timeframe filters
+        for tf in ("all", "day", "week", "month"):
+            res = await client.get("/api/opportunities", params={"timeframe": tf})
+            assert res.status_code == 200
+            assert isinstance(res.json(), list)

@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none';">
-  <title>TodayTech — Personal Opportunity Radar</title>
-  <meta name="description" content="Personal opportunity-radar for students and early-career developers. Find hackathons, fellowships, internships, and grants you are eligible for.">
+  <meta name="referrer" content="no-referrer">
+  <title>TodayTech — Public Opportunity Radar</title>
+  <meta name="description" content="Public opportunity radar for students and developers. Verified deadlines, hackathons, fellowships, and scholarships.">
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,7 +19,10 @@
     <div class="masthead-inner">
       <a href="/" class="brand" aria-label="TodayTech Home">
         <div class="brand-badge">T</div>
-        <span class="brand-name">TodayTech</span>
+        <div>
+          <span class="brand-name">TodayTech</span>
+          <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); display: block; line-height: 1;">Public Radar</span>
+        </div>
       </a>
 
       <div class="masthead-search">
@@ -28,32 +32,10 @@
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
         </span>
-        <input type="text" id="searchInput" class="search-input" placeholder="Search opportunities by title, skills, or organizer...">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search opportunities by title, field, or organizer...">
       </div>
 
       <div class="masthead-actions">
-        <button id="digestBtn" class="btn btn-secondary btn-sm" title="View Today's Curated Opportunity Digest">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-          </svg>
-          <span>TechHot Digest</span>
-        </button>
-
-        <button id="settingsBtn" class="btn btn-secondary btn-sm" title="Edit Profile & Preferences">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="4" y1="21" x2="4" y2="14"></line>
-            <line x1="4" y1="10" x2="4" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="12"></line>
-            <line x1="12" y1="8" x2="12" y2="3"></line>
-            <line x1="20" y1="21" x2="20" y2="16"></line>
-            <line x1="20" y1="12" x2="20" y2="3"></line>
-            <line x1="1" y1="14" x2="7" y2="14"></line>
-            <line x1="9" y1="8" x2="15" y2="8"></line>
-            <line x1="17" y1="16" x2="23" y2="16"></line>
-          </svg>
-          <span>Preferences</span>
-        </button>
-
         <button id="refreshBtn" class="btn btn-secondary btn-sm" title="Reload latest opportunities and stats">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
@@ -61,44 +43,27 @@
           </svg>
           <span id="refreshBtnText">Refresh</span>
         </button>
-
-        <button id="scanBtn" class="btn btn-primary btn-sm">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.5 2v6h-6"></path>
-            <path d="M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-          </svg>
-          <span id="scanBtnText">Scan Sources</span>
-        </button>
       </div>
     </div>
   </header>
 
   <!-- Main Application Container -->
   <main class="app-container">
-    <!-- Left Main Feed Column -->
     <section class="main-feed">
       <div class="radar-header">
         <h1 class="radar-title">TodayTech Radar</h1>
-        <p class="radar-subhead">Curated hackathons, fellowships, scholarships, and grants matching your profile.</p>
+        <p class="radar-subhead">Live verified opportunities, hackathons, fellowships, and scholarships. All application management runs via the private Telegram bot.</p>
       </div>
 
       <!-- Interactive Stats Strip (Filterable on click) -->
       <div class="stats-strip" id="statsStrip" role="region" aria-label="Quick filters">
-        <button class="stat-chip active" id="chipTotal" data-status="radar" data-closing="false" title="Click to view all radar matches">
+        <button class="stat-chip active" id="chipTotal" data-closing="false" title="Click to view all radar opportunities">
           <span class="stat-number" id="statTotal">--</span>
-          <span class="stat-label">Active Matches</span>
+          <span class="stat-label">Active Opportunities</span>
         </button>
-        <button class="stat-chip" id="chipClosing" data-status="radar" data-closing="true" title="Click to filter opportunities closing within 7 days">
+        <button class="stat-chip" id="chipClosing" data-closing="true" title="Click to filter opportunities closing within 7 days">
           <span class="stat-number" id="statClosing" style="color: var(--accent-terracotta-text);">--</span>
           <span class="stat-label">Closing Soon (&lt;7d)</span>
-        </button>
-        <button class="stat-chip" id="chipSaved" data-status="saved" data-closing="false" title="Click to view saved opportunities">
-          <span class="stat-number" id="statSaved">--</span>
-          <span class="stat-label">Saved in Pipeline</span>
-        </button>
-        <button class="stat-chip" id="chipDrafting" data-status="in_progress" data-closing="false" title="Click to view drafted applications">
-          <span class="stat-number" id="statDrafting">--</span>
-          <span class="stat-label">Applications Prepared</span>
         </button>
       </div>
 
@@ -118,18 +83,9 @@
           <span class="timeframe-label">Horizon:</span>
           <div class="timeframe-pills">
             <button class="time-btn active" data-timeframe="all">All Time</button>
-            <button class="time-btn" data-timeframe="day" title="Top picks &amp; closing in next 3 days">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-              Today
-            </button>
-            <button class="time-btn" data-timeframe="week" title="Closing in next 7 days">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="7" y1="15" x2="17" y2="15"></line></svg>
-              This Week
-            </button>
-            <button class="time-btn" data-timeframe="month" title="Closing in next 30 days">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"></path></svg>
-              This Month
-            </button>
+            <button class="time-btn" data-timeframe="day" title="Closing in next 3 days">Today</button>
+            <button class="time-btn" data-timeframe="week" title="Closing in next 7 days">This Week</button>
+            <button class="time-btn" data-timeframe="month" title="Closing in next 30 days">This Month</button>
           </div>
         </div>
       </div>
@@ -139,27 +95,15 @@
         <div style="padding: 32px; color: var(--text-muted);">Loading opportunities...</div>
       </div>
     </section>
-
-    <!-- Right Rail: Active Pipeline Column -->
-    <aside class="pipeline-column">
-      <div class="pipeline-card">
-        <h2 class="pipeline-title">Active Pipeline</h2>
-        <p class="pipeline-subhead">Opportunities saved for submission.</p>
-        
-        <div class="pipeline-list" id="pipelineList">
-          <!-- Rendered dynamically by dashboard.js -->
-        </div>
-      </div>
-    </aside>
   </main>
 
-  <!-- Application Assistant Slide-Out Studio Drawer -->
+  <!-- Opportunity Details Drawer / Modal -->
   <div class="drawer-backdrop" id="drawerBackdrop"></div>
   <aside class="drawer" id="drawer">
     <div class="drawer-header">
       <div>
-        <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em;">Application Assistant Studio</span>
-        <h2 class="drawer-title" id="drawerTitle">Opportunity Title</h2>
+        <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em;">Opportunity Breakdown</span>
+        <h2 class="drawer-title" id="drawerTitle">Opportunity Details</h2>
       </div>
       <button class="drawer-close" id="drawerClose" aria-label="Close Drawer">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -170,184 +114,29 @@
     </div>
 
     <div class="drawer-body" id="drawerContent">
-      <!-- Populated dynamically by openAssistant() -->
+      <!-- Populated dynamically and sanitized by safeHtml() -->
     </div>
 
     <div class="drawer-footer">
-      <span style="font-size: 12px; color: var(--text-muted);">Always review materials before submitting.</span>
-      <a href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" id="applyExternalLink">
-        <span>Open Application Portal</span>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="7" y1="17" x2="17" y2="7"></line>
-          <polyline points="7 7 17 7 17 17"></polyline>
-        </svg>
-      </a>
+      <span style="font-size: 12px; color: var(--text-muted);">Verified against official source.</span>
+      <div style="display: flex; gap: 8px;">
+        <a href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" id="sourceExternalLink">
+          <span>Official Page</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="7" y1="17" x2="17" y2="7"></line>
+            <polyline points="7 7 17 7 17 17"></polyline>
+          </svg>
+        </a>
+        <a href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" id="applyExternalLink">
+          <span>Apply Now</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="7" y1="17" x2="17" y2="7"></line>
+            <polyline points="7 7 17 7 17 17"></polyline>
+          </svg>
+        </a>
+      </div>
     </div>
   </aside>
-
-  <!-- Preferences & Profile Modal -->
-  <div class="modal-backdrop" id="settingsModalBackdrop">
-    <div class="modal" id="settingsModal">
-      <div class="modal-header">
-        <h2 class="modal-title">Radar Profile & Preferences</h2>
-        <button class="drawer-close" id="settingsModalClose" aria-label="Close Modal">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-
-      <div class="modal-body">
-        <form id="profileForm">
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="profName" class="form-label">Full Name</label>
-              <input type="text" id="profName" class="form-input" placeholder="Your name">
-            </div>
-            <div class="form-group">
-              <label for="profCountry" class="form-label">Country</label>
-              <input type="text" id="profCountry" class="form-input" placeholder="e.g. Ghana">
-            </div>
-          </div>
-
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="profUniversity" class="form-label">University / Institution</label>
-              <input type="text" id="profUniversity" class="form-input" placeholder="Your institution">
-            </div>
-            <div class="form-group">
-              <label for="profLevel" class="form-label">Education Level</label>
-              <select id="profLevel" class="form-input">
-                <option value="undergraduate">Undergraduate</option>
-                <option value="masters">Master's</option>
-                <option value="phd">PhD</option>
-                <option value="bootcamp">Bootcamp</option>
-                <option value="self-taught">Self-taught</option>
-                <option value="graduated">Graduated</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="profField" class="form-label">Field of Study</label>
-            <input type="text" id="profField" class="form-input" placeholder="e.g. Computer Science">
-          </div>
-
-          <div class="form-group">
-            <label for="profSkills" class="form-label">Technical Skills (comma-separated)</label>
-            <input type="text" id="profSkills" class="form-input" placeholder="Python, JavaScript, React, PyTorch">
-          </div>
-
-          <div class="form-group">
-            <label for="profInterests" class="form-label">Interests & Causes (comma-separated)</label>
-            <input type="text" id="profInterests" class="form-input" placeholder="Open Source, AI, Climate Tech, Web3">
-          </div>
-        </form>
-      </div>
-
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary btn-sm" id="settingsCancelBtn">Cancel</button>
-        <button type="button" class="btn btn-primary btn-sm" id="settingsSaveBtn">Save Preferences</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- TechHot Daily Digest Modal -->
-  <div class="modal-backdrop" id="digestModalBackdrop">
-    <div class="modal modal-lg" id="digestModal">
-      <div class="modal-header">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div class="flame-icon-box">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"></path></svg>
-          </div>
-          <div>
-            <h2 class="modal-title">TechHot Opportunities Digest</h2>
-            <div class="modal-subhead" id="digestDateLabel">Curated daily briefing for high-impact opportunities</div>
-          </div>
-        </div>
-        <button class="drawer-close" id="digestModalClose" aria-label="Close Digest">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Digest Sub-header Toolbar -->
-      <div class="digest-toolbar">
-        <div class="digest-timeframe-pills" role="tablist" aria-label="Digest Horizon">
-          <button class="digest-time-btn active" data-timeframe="day">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-            Today
-          </button>
-          <button class="digest-time-btn" data-timeframe="week">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="7" y1="15" x2="17" y2="15"></line></svg>
-            This Week
-          </button>
-          <button class="digest-time-btn" data-timeframe="month">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"></path></svg>
-            This Month
-          </button>
-        </div>
-        <div class="digest-toolbar-actions">
-          <button class="btn btn-secondary btn-sm" id="copyDigestBtn" title="Copy formatted markdown to clipboard">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-            <span>Copy Markdown</span>
-          </button>
-          <button class="btn btn-secondary btn-sm" id="telegramDigestBtn" title="Dispatch this digest directly to Telegram">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-            <span id="telegramBtnText">Send to Telegram</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="modal-body digest-body" id="digestBody">
-        <div class="digest-sections-grid">
-          <!-- Closing Soon Column -->
-          <section class="digest-column">
-            <div class="digest-col-header">
-              <div class="digest-col-title-wrap">
-                <span class="digest-dot dot-urgent"></span>
-                <h3 class="digest-col-title">Closing Soon</h3>
-              </div>
-              <span class="digest-count-badge" id="digestClosingCount">0</span>
-            </div>
-            <div class="digest-cards-list" id="digestClosingList">
-              <!-- Dynamically populated -->
-            </div>
-          </section>
-
-          <!-- Hot Recommendations Column -->
-          <section class="digest-column">
-            <div class="digest-col-header">
-              <div class="digest-col-title-wrap">
-                <span class="digest-dot dot-hot"></span>
-                <h3 class="digest-col-title">TechHot Top Picks</h3>
-              </div>
-              <span class="digest-count-badge" id="digestHotCount">0</span>
-            </div>
-            <div class="digest-cards-list" id="digestHotList">
-              <!-- Dynamically populated -->
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <span style="font-size: 12.5px; color: var(--text-muted); margin-right: auto;">
-          Click any card to inspect or prepare draft materials.
-        </span>
-        <button type="button" class="btn btn-secondary btn-sm" id="digestCloseBtn">Close</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>

@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from todaytech.bot.app import _format_details, cmd_deadlines, cmd_estimated
+from todaytech.bot.app import (
+    _format_details,
+    cmd_deadlines,
+    cmd_estimated,
+    cmd_ip,
+    cmd_save,
+    cmd_saved,
+)
 from todaytech.core.database import get_session, init_db, upsert_opportunity
 from todaytech.core.models import DateStatus
 
@@ -174,3 +181,84 @@ def test_format_details():
     assert "Date Evidence: Dates confirmed on official mlh.io 2026 schedule" in formatted
     assert "Official Source: https://mlh.io/season/2026/events" in formatted
     assert "Application URL: https://mlh.io/apply" in formatted
+
+
+@pytest.mark.asyncio
+async def test_cmd_ip_returns_public_ip_and_dashboard_link():
+    """Verify /ip command returns server public IP and public dashboard URL."""
+    update = MagicMock()
+    update.effective_user.id = 1291866098
+    update.message = MagicMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"settings": MagicMock(telegram_user_id=1291866098)}
+
+    await cmd_ip(update, context)
+
+    update.message.reply_text.assert_called_once()
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Server Public IP" in reply
+    assert "http://" in reply
+
+
+@pytest.mark.asyncio
+async def test_bot_auth_rejects_unauthorized_users():
+    """Verify bot ignores or rejects requests from anyone other than the owner."""
+    update = MagicMock()
+    update.effective_user.id = 999999999  # Unauthorized ID
+    update.effective_user.username = "intruder"
+    update.message = MagicMock()
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"settings": MagicMock(telegram_user_id=1291866098)}
+
+    # Attempt to run /deadlines
+    await cmd_deadlines(update, context)
+
+    # Should reply stating unauthorized and showing their numeric ID
+    update.message.reply_text.assert_called_once()
+    reply = update.message.reply_text.call_args[0][0]
+    assert "999999999" in reply
+    assert "configured for User ID" in reply
+    assert "Upcoming Confirmed Deadlines" not in reply
+
+
+@pytest.mark.asyncio
+async def test_bot_owner_can_save_and_view_pipeline():
+    """Verify bot owner can save opportunities and list saved pipeline."""
+    today = date.today()
+    async with get_session() as session:
+        await upsert_opportunity(
+            session,
+            {
+                "external_id": "opp_save_test",
+                "title": "Pipeline Save Target",
+                "type": "fellowship",
+                "deadline": today + timedelta(days=14),
+                "date_status": DateStatus.CONFIRMED.value,
+                "source_url": "https://target.org",
+            },
+        )
+        await session.commit()
+
+    update = MagicMock()
+    update.effective_user.id = 1291866098
+    update.message = MagicMock()
+    update.message.text = "save opp_save"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"settings": MagicMock(telegram_user_id=1291866098)}
+
+    # Save
+    await cmd_save(update, context)
+    update.message.reply_text.assert_called_once()
+    assert "Saved" in update.message.reply_text.call_args[0][0]
+
+    # View saved list
+    update.message.reply_text.reset_mock()
+    await cmd_saved(update, context)
+    update.message.reply_text.assert_called_once()
+    assert "opp_save_test" in update.message.reply_text.call_args[0][0]

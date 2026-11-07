@@ -66,10 +66,6 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///data/todaytech.db"
 
-    # ── Web Dashboard Security ────────────────────────────────
-    dashboard_username: str = "admin"
-    dashboard_password: str = ""
-
     # ── Logging ──────────────────────────────────────────────
     log_level: str = "INFO"
 

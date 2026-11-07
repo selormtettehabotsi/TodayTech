@@ -116,6 +116,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• /deadlines — see upcoming confirmed deadlines (sorted nearest first)\n"
         "• /estimated — see opportunities with projected or TBA dates\n"
         "• /saved — view your saved application pipeline\n"
+        "• /ip — view server public IP and public dashboard link\n"
         "• `/details <id>` — full verification breakdown, official source & links\n"
         "• `/apply <id>` — prepare tailored CV, SOP & answers\n"
         "• `/help` — view this help menu\n\n"
@@ -573,6 +574,37 @@ def _format_details(opp) -> str:
     return "\n".join(lines)
 
 
+@auth_required
+async def cmd_ip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ip — return current server public IP and dashboard URL."""
+    if not update.message:
+        return
+    import httpx
+
+    public_ip = "Unknown"
+    for service_url in (
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ):
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                res = await client.get(service_url)
+                if res.status_code == 200 and res.text.strip():
+                    public_ip = res.text.strip()
+                    break
+        except Exception:
+            continue
+
+    msg = (
+        f"🌐 *TodayTech Server Public IP*\n\n"
+        f"• **Public IP:** `{public_ip}`\n"
+        f"• **Web Dashboard:** [http://{public_ip}/](http://{public_ip}/)\n\n"
+        f"💡 Dashboard is public read-only. All actions (scan, save, apply) are managed exclusively through this bot."
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
+
+
 # ---------------------------------------------------------------------------
 # Bot startup
 # ---------------------------------------------------------------------------
@@ -593,6 +625,7 @@ async def start_bot(settings: Settings) -> None:
     app.add_handler(CommandHandler(["saved", "pipeline"], cmd_saved))
     app.add_handler(CommandHandler(["deadlines", "upcoming"], cmd_deadlines))
     app.add_handler(CommandHandler(["estimated", "tba"], cmd_estimated))
+    app.add_handler(CommandHandler(["ip", "serverip"], cmd_ip))
     app.add_handler(CommandHandler("apply", cmd_apply))
     app.add_handler(CommandHandler("details", cmd_details))
     app.add_handler(CommandHandler("save", cmd_save))
