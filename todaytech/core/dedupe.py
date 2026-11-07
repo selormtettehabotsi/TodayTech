@@ -45,6 +45,16 @@ _NON_OFFICIAL_DOMAINS = {
     "tiktok.com",
     "quora.com",
     "pinterest.com",
+    # URL shorteners
+    "lnkd.in",
+    "bit.ly",
+    "tinyurl.com",
+    "t.co",
+    "goo.gl",
+    "ow.ly",
+    "buff.ly",
+    "is.gd",
+    "cutt.ly",
     # Aggregators, job/scholarship boards & lead directories
     "devpost.com",
     "dev.events",
@@ -58,6 +68,70 @@ _NON_OFFICIAL_DOMAINS = {
     "youthopportunitieshub.com",
     "youthhubmedia.com",
     "youthhubafrica.org",
+    "opportunitiescorners.com",
+    "opportunitiesfeed.com",
+    "opportunitiesforyouth.org",
+    "opportunitiesnexus.com",
+    "opportunitycrack.com",
+    "opportunityforafrica.org",
+    "opportunitynest.org",
+    "scholarship-positions.com",
+    "scholarshipamerica.org",
+    "scholarshipclaude.com",
+    "scholarshipopenings.com",
+    "scholarships.af",
+    "scholarships.com",
+    "scholarships360.org",
+    "scholarshipsandgrants.us",
+    "scholarshipset.com",
+    "scholarwing.com",
+    "scientifyresearch.org",
+    "swiftscholarships.com",
+    "studentcompetitions.com",
+    "studentscholarships.org",
+    "studyinnl.org",
+    "studyinternational.com",
+    "thegrantportal.com",
+    "unigo.com",
+    "universalscholarships.com",
+    "ukscholarships.uk",
+    "profellow.com",
+    "buddy4study.com",
+    "accessscholarships.com",
+    "brightscholarship.com",
+    "collegementor.com",
+    "collegescholarships.org",
+    "communityhackathons.com",
+    "competitionsciences.org",
+    "devgrantsdaily.com",
+    "european-funding-guide.eu",
+    "e27.co",
+    "pro-passionprojects.org",
+    "stemgrants.com",
+    "t4tutorials.com",
+    "talentcoop.io",
+    "techjobsforgood.com",
+    "theinternscompany.com",
+    "medlocumjobs.com",
+    "techjobsinghana.com",
+    "vacanciesinghana.com",
+    "talentsinafrica.com",
+    "crossover.com",
+    "careerjet.com.gh",
+    "businessghana.com",
+    "newgrad-jobs.com",
+    "bebee.com",
+    "startup.jobs",
+    "jooble.org",
+    "coursereport.com",
+    "courseoptions.com",
+    "coursejoiner.com",
+    "contents101.com",
+    "beecompete.com",
+    "allhackathons.com",
+    "applyindex.com",
+    "applykite.com",
+    "hackathon.com",
     "jobsearchgh.com",
     "builtin.com",
     "fastweb.com",
@@ -191,6 +265,29 @@ def is_official_domain(url: str | None, organizer: str = "") -> bool:
     # 1. Reject known non-official aggregator, blog, social media, and directory domains
     for non_off in _NON_OFFICIAL_DOMAINS:
         if domain == non_off or domain.endswith("." + non_off):
+            return False
+
+    # Generic aggregator domain suffixes (unless official gov or academic domains)
+    if not (
+        domain.endswith(".gov")
+        or domain.endswith(".gov.gh")
+        or domain.endswith(".edu")
+        or domain.endswith(".edu.gh")
+        or domain.endswith(".ac.uk")
+    ):
+        if any(
+            domain.endswith("." + sfx) or domain == sfx
+            for sfx in (
+                "hackathon.com",
+                "allhackathons.com",
+                "scholarships.com",
+                "scholarship.com",
+                "scholarships.org",
+                "scholarship.org",
+                "opportunities.com",
+                "opportunities.org",
+            )
+        ):
             return False
 
     # 2. GitHub: Only official GitHub domains (e.g. education.github.com) or official repos are accepted

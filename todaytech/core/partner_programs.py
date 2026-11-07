@@ -121,7 +121,19 @@ def validate_partner_program(
     if any(
         re.search(rf"\b{re.escape(kw)}\b", combined_level_text) for kw in _GRADUATE_ONLY_KEYWORDS
     ):
-        if "undergraduate" not in combined_level_text and "bachelor" not in combined_level_text:
+        has_undergrad = "undergraduate" in combined_level_text or bool(
+            re.search(
+                r"\b(bachelor('?s)?\s+(studies|study|students?|scholarship|programme|program))\b",
+                combined_level_text,
+            )
+        )
+        requires_bachelors = bool(
+            re.search(
+                r"\b(bachelor('?s)?\s+degree\s+(required|holder|completed|prerequisite)|must\s+hold\s+a\s+bachelor)\b",
+                combined_level_text,
+            )
+        )
+        if not has_undergrad or requires_bachelors or "graduate study" in combined_level_text:
             return (
                 False,
                 f"{matched_institution} partner programme is graduate/postgraduate only; excludes undergraduates",
